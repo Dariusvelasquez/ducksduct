@@ -20,13 +20,13 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', theme: 'paper', walls: [], cfg: { btuPerSqft: 30 }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: 'paper', walls: [], listing: {}, underlay: null, draft: null, calib: [], cfg: { btuPerSqft: 30 }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   /* ---------- persistence ---------- */
-  function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...state, pending: null, sel: null })); } catch (e) {} }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...state, pending: null, sel: null, underlay: null, draft: null, calib: [] })); } catch (e) {} }
   function load() {
-    try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.rooms) { Object.assign(state, s, { pending: null, sel: null, tool: 'select' }); return true; } } catch (e) {}
+    try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.rooms) { Object.assign(state, s, { pending: null, sel: null, tool: 'select', underlay: null, draft: null, calib: [], listing: s.listing || {} }); return true; } } catch (e) {}
     return false;
   }
   const scn = () => state.scenarios[state.active];
@@ -37,6 +37,8 @@
     state.footprint.forEach((p) => { xs.push(p.x); ys.push(p.y); });
     state.rooms.forEach((r) => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
     ['existing', 'proposed'].forEach((k) => state.scenarios[k].equip.forEach((e) => { xs.push(e.x); ys.push(e.y); }));
+    const u = state.underlay;
+    if (u) { xs.push(u.x, u.x + u.w); ys.push(u.y, u.y + u.h); }
     if (!xs.length) return { x: 0, y: 0, w: 60, h: 40 };
     const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
@@ -132,6 +134,8 @@
     el('path', { d: 'M0 0V1.2', stroke: COL.line, 'stroke-opacity': 0.3, 'stroke-width': 0.2 }, hat);
     el('rect', { x: v.x - 500, y: v.y - 500, width: v.w + 1000, height: v.h + 1000, fill: `url(#g${svg.id})`, 'data-bg': 1 }, svg);
 
+    const U = state.underlay;
+    if (interactive && U && U.show) el('image', { href: U.url, x: U.x, y: U.y, width: U.w, height: U.h, opacity: U.op, preserveAspectRatio: 'none', 'pointer-events': 'none' }, svg);
     if (state.footprint.length) el('path', { d: 'M' + state.footprint.map((p) => `${p.x} ${p.y}`).join('L') + 'Z', fill: 'none', stroke: COL.line, 'stroke-width': 0.8, 'stroke-linejoin': 'miter', 'pointer-events': 'none' }, svg);
     state.rooms.forEach((r) => {
       const row = a.rooms.find((x) => x.id === r.id);
@@ -179,6 +183,13 @@
       if (interactive && state.sel === d.id) el('path', { d: p.dpath, fill: 'none', stroke: COL.sel, 'stroke-width': 0.3, 'stroke-dasharray': '0.4 0.4', 'pointer-events': 'none' }, svg);
     });
     s.equip.forEach((e) => drawEquip(svg, e, a, interactive));
+    if (interactive) {
+      const dr = state.draft;
+      if (dr && dr.kind === 'room') el('rect', { x: dr.x, y: dr.y, width: dr.w, height: dr.h, fill: COL.sel, 'fill-opacity': 0.1, stroke: COL.sel, 'stroke-width': 0.3, 'stroke-dasharray': '0.6 0.4', 'pointer-events': 'none' }, svg);
+      if (dr && dr.kind === 'wall') el('line', { x1: dr.x1, y1: dr.y1, x2: dr.x2, y2: dr.y2, stroke: COL.sel, 'stroke-width': 0.6, 'pointer-events': 'none' }, svg);
+      state.calib.forEach((c) => el('circle', { cx: c.x, cy: c.y, r: 0.6, fill: COL.sel, 'pointer-events': 'none' }, svg));
+      if (dr && dr.kind === 'room') label(svg, dr.x + dr.w / 2, dr.y + dr.h / 2, `${dr.w} × ${dr.h} ft`, { size: 1.1, bold: true });
+    }
     label(svg, v.x + 1.5, v.y + v.h * 0.07, key === 'proposed' ? 'After' : 'Before', { size: Math.max(2.2, v.h * 0.06), bold: true, anchor: 'start', fill: COL.warn });
     if (state.address) label(svg, v.x + v.w - 1.5, v.y + v.h - 1.5, state.address.split(',').slice(0, 2).join(','), { size: Math.max(1.4, v.h * 0.03), bold: true, anchor: 'end' });
     return a;
@@ -201,7 +212,7 @@
 
   function recordNote() {
     const r = state.record; if (!r) return '';
-    const drawn = Math.round(state.rooms.reduce((t, x) => t + x.w * x.h, 0));
+    const drawn = Math.round(condArea());
     const bits = [r.county + ' record', r.sqft && `${r.sqft} sf heated`, r.beds && `${r.beds} bd`, r.baths && `${r.baths} ba`, r.yearBuilt && `built ${r.yearBuilt}`].filter(Boolean).join(' · ');
     const off = r.sqft && Math.abs(drawn - r.sqft) / r.sqft > 0.05;
     return `<p class="muted">${esc(bits)}${r.note ? ' · ' + esc(r.note) : ''}${off ? `<br>Drawn rooms total ${drawn} sf vs ${r.sqft} sf on record. <button id="btnScale">Scale rooms to record</button>` : ''}</p>`;
@@ -219,9 +230,11 @@
       ${a.warnings.length ? '<ul class="warns">' + a.warnings.map((w) => `<li>${esc(w)}</li>`).join('') + '</ul>' : ''}`;
   }
 
-  function scaleToRecord() {
-    const r = state.record; if (!r || !r.sqft) return;
-    const drawn = state.rooms.reduce((t, x) => t + x.w * x.h, 0), f = Math.sqrt(r.sqft / drawn);
+  const condArea = () => state.rooms.filter((x) => !x.noAC).reduce((t, x) => t + x.w * x.h, 0);
+  function scaleToRecord() { if (state.record && state.record.sqft) scaleToSqft(state.record.sqft); }
+  function scaleToSqft(target) {
+    const drawn = condArea(); if (!drawn || !(target > 0)) return;
+    const f = Math.sqrt(target / drawn);
     const sc = (v) => +(v * f).toFixed(1);
     state.rooms.forEach((x) => { x.x = sc(x.x); x.y = sc(x.y); x.w = sc(x.w); x.h = sc(x.h); });
     state.footprint.forEach((q) => { q.x = sc(q.x); q.y = sc(q.y); });
@@ -260,6 +273,23 @@
     $('#roomTable').innerHTML = '<table><tr><th>Name</th><th>X</th><th>Y</th><th>W</th><th>D</th><th>A/C</th><th></th></tr>' + state.rooms.map((r) => `<tr data-room="${r.id}"><td><input class="nm" data-rk="name" value="${esc(r.name)}"></td>${['x', 'y', 'w', 'h'].map((k) => `<td><input data-rk="${k}" type="number" step="0.5" value="${r[k]}" style="width:44px"></td>`).join('')}<td><input data-rk="ac" type="checkbox" ${r.noAC ? '' : 'checked'} style="width:auto"></td><td><button class="x" data-rdel>×</button></td></tr>`).join('') + '</table>';
   }
 
+  function renderXcheck() {
+    const drawn = Math.round(condArea()), r = state.record || {}, l = state.listing || {};
+    const rows = [['Drawn rooms (A/C)', drawn, null], [(r.county || 'County') + ' record', r.sqft, 'rec'], ['Listing', l.sqft, 'lst']].filter((x) => x[1]);
+    let h = '<table><tr><th>Source</th><th>sq ft</th><th>vs drawn</th><th></th></tr>' + rows.map(([n, v, k]) => {
+      const d = drawn ? (v - drawn) / drawn : 0, cls = k && Math.abs(d) > 0.1 ? 'warn' : '';
+      return `<tr><td>${esc(n)}</td><td>${Math.round(v)}</td><td class="${cls}">${k ? (d >= 0 ? '+' : '') + Math.round(d * 100) + '%' : ''}</td><td>${k ? `<button data-useq="${v}">Scale</button>` : ''}</td></tr>`;
+    }).join('') + '</table>';
+    const notes = [];
+    if (r.sqft && l.sqft && Math.abs(r.sqft - l.sqft) / r.sqft > 0.1) notes.push(`Record and listing differ by ${Math.round(Math.abs(r.sqft - l.sqft))} sq ft. Listings often count garages, porches or additions, so confirm on site.`);
+    if (r.beds && l.beds && r.beds !== l.beds) notes.push(`Beds: record ${r.beds} vs listing ${l.beds}.`);
+    if (r.baths && l.baths && r.baths !== l.baths) notes.push(`Baths: record ${r.baths} vs listing ${l.baths}.`);
+    $('#xcheck').innerHTML = h + notes.map((n) => `<p class="warn">${esc(n)}</p>`).join('');
+    const q = encodeURIComponent(state.address || ''), dash = (state.address || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    $('#lnkZ').href = 'https://www.zillow.com/homes/' + dash + '_rb/';
+    $('#lnkR').href = 'https://www.realtor.com/realestateandhomes-search/' + dash;
+  }
+
   function renderWalls() {
     $('#wallTable').innerHTML = '<table><tr><th>X1</th><th>Y1</th><th>X2</th><th>Y2</th><th>rem</th><th></th></tr>' + (state.walls || []).map((w) => `<tr data-wall="${w.id}">${['x1', 'y1', 'x2', 'y2'].map((k) => `<td><input data-wk="${k}" type="number" step="0.5" value="${w[k]}" style="width:42px"></td>`).join('')}<td><input data-wk="removed" type="checkbox" ${w.removed ? 'checked' : ''} style="width:auto"></td><td><button class="x" data-wdel>×</button></td></tr>`).join('') + '</table>';
   }
@@ -267,7 +297,7 @@
   function renderAll() {
     document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
-    renderResults(); renderProps();
+    renderResults(); renderProps(); renderXcheck();
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
     document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
     $('#plan').style.cursor = state.tool === 'select' ? 'grab' : 'crosshair';
@@ -394,23 +424,52 @@
       const p = svgPoint(svg, ev);
       if (g) {
         const id = g.dataset.id;
-        if (state.tool !== 'select') { linkClick(id); return; }
+        if (['supply', 'return', 'refrig'].includes(state.tool)) { linkClick(id); return; }
+        if (state.tool !== 'select') { startTrace(p, ev); ev.preventDefault(); return; }
         const e = scn().equip.find((x) => x.id === id);
         state.sel = id; drag = { kind: 'eq', e, dx: p.x - e.x, dy: p.y - e.y }; renderAll();
       } else if (du && state.tool === 'select') { state.sel = du.dataset.duct; renderAll(); }
+      else if (state.tool !== 'select' && !['supply', 'return', 'refrig'].includes(state.tool)) startTrace(p, ev);
       else { state.sel = null; state.pending = null; drag = { kind: 'pan', sx: ev.clientX, sy: ev.clientY, v: { ...state.view } }; renderProps(); }
       ev.preventDefault();
     });
     window.addEventListener('pointermove', (ev) => {
       if (!drag) return;
       if (drag.kind === 'eq') { const p = svgPoint(svg, ev); drag.e.x = snap(p.x - drag.dx); drag.e.y = snap(p.y - drag.dy); refreshLight(); }
-      else {
+      else if (drag.kind === 'room') { const p = svgPoint(svg, ev), x = snap(p.x), y = snap(p.y); state.draft = { kind: 'room', x: Math.min(drag.x0, x), y: Math.min(drag.y0, y), w: Math.abs(x - drag.x0), h: Math.abs(y - drag.y0) }; refreshLight(); }
+      else if (drag.kind === 'wall') { const p = svgPoint(svg, ev); let x = snap(p.x), y = snap(p.y); if (Math.abs(x - drag.x0) >= Math.abs(y - drag.y0)) y = drag.y0; else x = drag.x0; state.draft = { kind: 'wall', x1: drag.x0, y1: drag.y0, x2: x, y2: y }; refreshLight(); }
+      else if (drag.kind === 'img') { const p = svgPoint(svg, ev), u = state.underlay; u.x = drag.ux + (p.x - drag.px); u.y = drag.uy + (p.y - drag.py); refreshLight(); }
+      else if (drag.kind === 'pan') {
         const r = svg.getBoundingClientRect(), k = Math.max(drag.v.w / r.width, drag.v.h / r.height);
         state.view = { ...drag.v, x: drag.v.x - (ev.clientX - drag.sx) * k, y: drag.v.y - (ev.clientY - drag.sy) * k };
         svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
       }
     });
-    window.addEventListener('pointerup', () => { if (drag && drag.kind === 'eq') renderAll(); drag = null; });
+    window.addEventListener('pointerup', () => {
+      if (drag && drag.kind === 'room' && state.draft && state.draft.w >= 3 && state.draft.h >= 3) {
+        const d = state.draft; state.rooms.push({ id: uid('r'), name: 'Room ' + (state.rooms.length + 1), x: d.x, y: d.y, w: d.w, h: d.h, ceiling: 8 }); renderRooms();
+      } else if (drag && drag.kind === 'wall' && state.draft && Math.abs(state.draft.x2 - state.draft.x1) + Math.abs(state.draft.y2 - state.draft.y1) >= 2) {
+        const d = state.draft; state.walls.push({ id: uid('w'), x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2, removed: false }); renderWalls();
+      }
+      if (drag && ['room', 'wall'].includes(drag.kind)) state.draft = null;
+      if (drag && drag.kind !== 'pan') renderAll();
+      drag = null;
+    });
+    // Tracing tools: room/wall start a drag, moveimg drags the underlay, calib collects two points.
+    function startTrace(p) {
+      if (state.tool === 'room' || state.tool === 'wall') drag = { kind: state.tool, x0: snap(p.x), y0: snap(p.y) };
+      else if (state.tool === 'moveimg' && state.underlay) drag = { kind: 'img', px: p.x, py: p.y, ux: state.underlay.x, uy: state.underlay.y };
+      else if (state.tool === 'calib' && state.underlay) {
+        state.calib.push({ x: p.x, y: p.y });
+        if (state.calib.length === 2) {
+          const [a, b] = state.calib, ft = parseFloat(prompt('Real-world distance between the two points (feet)?'));
+          const meas = Math.hypot(b.x - a.x, b.y - a.y);
+          if (ft > 0 && meas > 0) { const f = ft / meas, u = state.underlay; u.x = a.x - (a.x - u.x) * f; u.y = a.y - (a.y - u.y) * f; u.w *= f; u.h *= f; }
+          state.calib = []; state.tool = 'select';
+        }
+        renderAll();
+      }
+    }
     svg.addEventListener('wheel', (ev) => {
       ev.preventDefault();
       const p = svgPoint(svg, ev), f = ev.deltaY > 0 ? 1.12 : 1 / 1.12, v = state.view;
@@ -439,11 +498,43 @@
   function setStatus(t) { $('#status').textContent = t; }
 
   function bindUI() {
+    // floor plan image, cross-check
+    $('#imgFile').onchange = (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const fr = new FileReader();
+      fr.onload = () => {
+        const im = new Image();
+        im.onload = () => {
+          const k = Math.min(1, 1600 / Math.max(im.width, im.height)), c = document.createElement('canvas');
+          c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          const b = bbox(), w = state.rooms.length ? b.w : 60;
+          state.underlay = { url: c.toDataURL('image/jpeg', 0.85), x: state.rooms.length ? b.x : 0, y: state.rooms.length ? b.y : 0, w, h: (w * c.height) / c.width, op: 0.55, show: true };
+          fit(); renderAll();
+          setStatus('Image loaded at a guessed size. Click Set scale and mark a wall of known length.');
+        };
+        im.src = fr.result;
+      };
+      fr.readAsDataURL(f);
+    };
+    $('#btnCalib').onclick = () => { if (!state.underlay) return setStatus('Upload a floor plan image first.'); state.tool = 'calib'; state.calib = []; $('#hint').textContent = 'Click two points on a wall of known length, then enter the length in feet.'; renderAll(); };
+    $('#btnMoveImg').onclick = () => { if (!state.underlay) return setStatus('Upload a floor plan image first.'); state.tool = 'moveimg'; $('#hint').textContent = 'Drag to slide the image into place.'; renderAll(); };
+    $('#imgShow').onchange = (e) => { if (state.underlay) { state.underlay.show = e.target.checked; renderAll(); } };
+    $('#imgOp').oninput = (e) => { if (state.underlay) { state.underlay.op = e.target.value / 100; refreshLight(); } };
+    $('#btnRmImg').onclick = () => { state.underlay = null; renderAll(); };
+    $('#btnClearRooms').onclick = () => {
+      if (!confirm('Start a blank plan? This removes all rooms, walls, the outline and all equipment in both scenarios.')) return;
+      state.rooms = []; state.walls = []; state.footprint = []; state.record = null;
+      ['existing', 'proposed'].forEach((k) => (state.scenarios[k] = { equip: [], ducts: [] }));
+      renderRooms(); renderWalls(); renderAll();
+    };
+    [['lsSqft', 'sqft'], ['lsBeds', 'beds'], ['lsBaths', 'baths']].forEach(([id, k]) => { $('#' + id).oninput = (e) => { state.listing[k] = e.target.value === '' ? null : parseFloat(e.target.value); renderXcheck(); save(); }; });
+    $('#xcheck').addEventListener('click', (e) => { if (e.target.dataset.useq) scaleToSqft(parseFloat(e.target.dataset.useq)); });
     $('#scnSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { state.active = b.dataset.scn; state.sel = state.pending = null; renderAll(); } });
-    $('#toolSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { state.tool = b.dataset.tool; state.pending = null; $('#hint').textContent = state.tool === 'select' ? 'Drag equipment to move it.' : 'Click the first item, then the second item to connect them.'; renderAll(); } });
+    $('#toolSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { state.tool = b.dataset.tool; state.pending = null; $('#hint').textContent = state.tool === 'select' ? 'Drag equipment to move it.' : state.tool === 'room' ? 'Drag a rectangle over a room on the image. Rename and fine-tune it in the Rooms table.' : state.tool === 'wall' ? 'Drag to draw a wall (snaps horizontal or vertical).' : 'Click the first item, then the second item to connect them.'; renderAll(); } });
     document.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => addEquip(b.dataset.add)));
     $('#btnFit').onclick = () => { fit(); renderAll(); };
-    $('#btnAuto').onclick = () => { if (confirm('Replace the ' + state.active + ' layout with an automatic one?')) { autoLayout(state.active, { splitters: state.active === 'proposed' }); renderAll(); } };
+    $('#btnAuto').onclick = () => { if (!state.rooms.length) return alert('Add or trace rooms first.'); if (confirm('Replace the ' + state.active + ' layout with an automatic one?')) { autoLayout(state.active, { splitters: state.active === 'proposed' }); renderAll(); } };
     $('#btnCopy').onclick = () => { state.scenarios.proposed = JSON.parse(JSON.stringify(state.scenarios.existing)); state.active = 'proposed'; renderAll(); };
     $('#btnPresent').onclick = present;
     $('#pClose').onclick = () => { $('#present').hidden = true; };
@@ -536,6 +627,7 @@
   if (load()) {
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
     $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
+    ['sqft', 'beds', 'baths'].forEach((k) => { const el2 = $('#ls' + k[0].toUpperCase() + k.slice(1)); if (el2 && state.listing[k] != null) el2.value = state.listing[k]; });
     state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
     if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
   } else loadSample();

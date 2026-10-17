@@ -42,6 +42,22 @@
     </section>
 
     <section>
+      <h2>Floor plan image</h2>
+      <input type="file" id="imgFile" accept="image/*">
+      <div class="row"><button id="btnCalib">Set scale</button><button id="btnMoveImg">Move image</button></div>
+      <label><input type="checkbox" id="imgShow" checked style="width:auto"> Show image &nbsp; Opacity<input id="imgOp" type="range" min="10" max="100" value="55"></label>
+      <div class="row"><button id="btnClearRooms">Blank plan</button><button id="btnRmImg">Remove image</button></div>
+      <small>Upload a listing floor plan or a photo of a sketch. Set scale: click two points on a known wall, enter its length. Use Blank plan first for a new job, then Draw room / Draw wall in the toolbar to trace. The image is kept in memory only, so re-upload after a reload.</small>
+    </section>
+
+    <section>
+      <h2>Cross-check listing</h2>
+      <div class="row"><a id="lnkZ" target="_blank" rel="noopener">Zillow</a><a id="lnkR" target="_blank" rel="noopener">Realtor.com</a></div>
+      <div class="row"><label>Listing sq ft<input id="lsSqft" type="number"></label><label>Beds<input id="lsBeds" type="number"></label><label>Baths<input id="lsBaths" type="number" step="0.5"></label></div>
+      <div id="xcheck"></div>
+    </section>
+
+    <section>
       <h2>Current AC</h2>
       <label>Model number<input id="model" placeholder="e.g. 4TTR4036 or GSX140361"></label>
       <div class="row">
@@ -74,6 +90,8 @@
         <button data-tool="supply">Supply duct</button>
         <button data-tool="return">Return duct</button>
         <button data-tool="refrig">Refrigerant line</button>
+        <button data-tool="room">Draw room</button>
+        <button data-tool="wall">Draw wall</button>
       </div>
       <span class="sep"></span>
       <button data-add="condenser">+ Condenser</button>

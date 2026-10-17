@@ -16,6 +16,8 @@ label{display:block;color:var(--mut);font-size:11px;margin:6px 0}
 label input,label select{margin-top:2px;color:var(--ink)}
 .row{display:flex;gap:8px;align-items:flex-end}.row>*{flex:1}
 small,.muted{color:var(--mut)}
+a{color:var(--acc)}
+input[type=range]{padding:0}
 .status{color:var(--mut);font-size:12px;min-height:16px;margin:4px 0}
 details{margin:8px 0}summary{cursor:pointer;color:var(--mut)}
 #app{display:grid;grid-template-columns:270px 1fr 330px;height:calc(100% - 46px)}

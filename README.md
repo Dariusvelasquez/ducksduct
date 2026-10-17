@@ -19,3 +19,7 @@ No API key needed for these counties; the lookup queries public property-apprais
 - Pasco (incl. New Port Richey): parcel ID matched by house number from the Pasco PA layer; no living area published.
 - Pinellas (incl. Dunedin) and anywhere else in Florida: parcel ID only (Florida DOR statewide parcels). When the geocoded point misses the lot, the nearest parcel is chosen and flagged "approximate".
 Regrid token remains an optional fallback for other states.
+
+## Tracing and cross-check
+- Upload a floor-plan image (listing floor plan screenshot, photo of a sketch), set the scale on a wall of known length, then trace rooms and walls with the Draw room / Draw wall tools. The image is held in memory only.
+- Cross-check: type the listing's sq ft / beds / baths (Zillow and Realtor.com links open the address; there is no public Zillow API and scraping it violates their terms) and compare against the county record and the drawn rooms. "Scale" resizes the drawing to a chosen source.
