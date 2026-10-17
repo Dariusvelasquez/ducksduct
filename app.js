@@ -3,9 +3,14 @@
   const $ = (s) => document.querySelector(s);
   const NS = 'http://www.w3.org/2000/svg';
   const KEY = 'ductlayout.v1';
-  const COL = { supply: '#ff8a5c', return: '#5ce1ff', refrig: '#ffd75c', line: '#cfe3ff' };
-  const SIZE = { condenser: [3.6, 3.6], ahu: [2.4, 3.4], supply: [1.8, 1.8], return: [2.6, 1.8], splitter: [1.4, 1.4], head: [3.4, 1.1] };
-  const NAME = { condenser: 'Condenser', ahu: 'Air handler', supply: 'Outlet', return: 'Intake', splitter: 'Splitter', head: 'Mini-split' };
+  const THEMES = {
+    paper: { bg: '#fbfbf4', grid: '#8db8e0', gridOp: 0.45, line: '#111111', supply: '#1d3fc4', return: '#d21a1a', refrig: '#c48a00', sel: '#e6007e', ok: '#0a7a3d', warn: '#b36b00', bad: '#c4001a' },
+    blueprint: { bg: '#0b3a6b', grid: '#ffffff', gridOp: 0.09, line: '#cfe3ff', supply: '#ff8a5c', return: '#5ce1ff', refrig: '#ffd75c', sel: '#ffffff', ok: '#3ecf8e', warn: '#f5b942', bad: '#ff6b6b' },
+  };
+  const COL = Object.assign({}, THEMES.paper);
+  function applyTheme() { Object.assign(COL, THEMES[state.theme] || THEMES.paper); }
+  const SIZE = { condenser: [3.6, 3.6], ahu: [2.4, 3.4], supply: [1.5, 1.5], return: [2.4, 2.4], splitter: [2.4, 2.4], head: [3.4, 1.1], scuttle: [1.8, 1.8], note: [7, 1.8] };
+  const NAME = { condenser: 'Condenser', ahu: 'Air handler', supply: 'Outlet', return: 'Intake', splitter: 'Splitter', head: 'Mini-split', scuttle: 'Scuttle', note: 'Note' };
 
   let uidn = 0;
   const uid = (p) => p + Date.now().toString(36) + (++uidn);
@@ -15,7 +20,7 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', cfg: { btuPerSqft: 30 }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: 'paper', walls: [], cfg: { btuPerSqft: 30 }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   /* ---------- persistence ---------- */
@@ -57,7 +62,7 @@
   function label(parent, x, y, t, o) {
     o = o || {};
     const n = el('text', { x, y, 'font-size': o.size || 1.15, fill: o.fill || COL.line, 'text-anchor': o.anchor || 'middle', 'font-family': 'ui-monospace,Menlo,monospace', 'font-weight': o.bold ? 700 : 400, 'pointer-events': 'none' }, parent, t);
-    n.style.paintOrder = 'stroke'; n.setAttribute('stroke', '#0b3a6b'); n.setAttribute('stroke-width', '0.35');
+    n.style.paintOrder = 'stroke'; n.setAttribute('stroke', COL.bg); n.setAttribute('stroke-width', '0.35');
     return n;
   }
 
@@ -66,9 +71,9 @@
     const info = a.eq[e.id] || {};
     const grp = el('g', { transform: `translate(${e.x} ${e.y})`, 'data-id': e.id, style: interactive ? 'cursor:move' : '' }, g);
     const sel = interactive && (state.sel === e.id || state.pending === e.id);
-    const stroke = sel ? '#fff' : COL.line;
+    const stroke = sel ? COL.sel : COL.line;
     const sw = sel ? 0.35 : 0.2;
-    const box = (fill) => el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, fill: fill || '#0b3a6b', stroke, 'stroke-width': sw }, grp);
+    const box = (fill) => el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, fill: fill || COL.bg, stroke, 'stroke-width': sw }, grp);
     const fmt = (v) => Math.round(v);
     if (e.type === 'condenser') {
       box(); el('circle', { r: w * 0.38, fill: 'none', stroke, 'stroke-width': 0.15 }, grp);
@@ -84,16 +89,26 @@
       label(grp, w / 2 + 0.4, -0.5, 'OUTLET', { size: 0.95, anchor: 'start', fill: COL.supply, bold: true });
     } else if (e.type === 'supply') {
       box(); el('path', { d: `M${-w / 2} ${-h / 2}L${w / 2} ${h / 2}M${w / 2} ${-h / 2}L${-w / 2} ${h / 2}`, stroke: COL.supply, 'stroke-width': 0.15 }, grp);
-      label(grp, 0, -h / 2 - 0.5, `OUTLET ${fmt(info.cfm || 0)} CFM`, { size: 0.9, fill: COL.supply });
+      const dd = a.eqDia && a.eqDia[e.id];
+      label(grp, 0, -h / 2 - 0.5, `OUTLET${dd ? ' ' + dd + '"' : ''}`, { size: 0.85, fill: COL.supply, bold: true });
+      label(grp, 0, h / 2 + 1, `${fmt(info.cfm || 0)} CFM`, { size: 0.75, fill: COL.supply });
     } else if (e.type === 'return') {
-      box(); for (let i = 1; i < 4; i++) el('path', { d: `M${-w / 2 + (w / 4) * i} ${-h / 2}V${h / 2}`, stroke: COL.return, 'stroke-width': 0.12 }, grp);
-      label(grp, 0, -h / 2 - 0.5, `INTAKE ${fmt(info.cfm || 0)} CFM`, { size: 0.9, fill: COL.return });
-    } else if (e.type === 'splitter') {
-      el('path', { d: `M0 ${-h / 2}L${w / 2} 0L0 ${h / 2}L${-w / 2} 0Z`, fill: '#0b3a6b', stroke, 'stroke-width': sw }, grp);
-      label(grp, 0, -h / 2 - 0.4, 'SPLIT', { size: 0.8 });
-    } else if (e.type === 'head') {
+      el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, fill: COL.bg, stroke: sel ? COL.sel : COL.return, 'stroke-width': 0.35 }, grp);
+      label(grp, 0, 0.55, 'R', { size: 1.7, bold: true, fill: COL.return });
+      label(grp, 0, -h / 2 - 0.5, `INTAKE ${e.size || '20x20'}`, { size: 0.85, fill: COL.return, bold: true });
+      label(grp, 0, h / 2 + 1, `${fmt(info.cfm || 0)} CFM`, { size: 0.75, fill: COL.return });
+} else if (e.type === 'splitter') {
+      el('path', { d: `M${-w / 2} ${-h / 2}L${w / 2} 0L${-w / 2} ${h / 2}Z`, fill: COL.bg, stroke: sel ? COL.sel : COL.supply, 'stroke-width': 0.3 }, grp);
+      label(grp, 0, h / 2 + 1, 'PLENUM / SPLIT', { size: 0.75, fill: COL.supply });
+} else if (e.type === 'head') {
       box(); for (let i = 0; i < 3; i++) el('path', { d: `M${-w / 2 + 0.3} ${-0.2 + i * 0.25}H${w / 2 - 0.3}`, stroke: COL.supply, 'stroke-width': 0.1 }, grp);
       label(grp, 0, -h / 2 - 0.5, `${e.label || 'MINI-SPLIT'} · OUTLET ${Math.round((e.btu || 0) / 1000)}k BTU`, { size: 0.9, fill: COL.supply });
+    } else if (e.type === 'scuttle') {
+      box(); el('path', { d: `M${-w / 2} ${-h / 2}L${w / 2} ${h / 2}M${w / 2} ${-h / 2}L${-w / 2} ${h / 2}`, stroke, 'stroke-width': 0.12 }, grp);
+      label(grp, w / 2 + 0.4, 0.35, e.label || 'Scuttle', { size: 1, anchor: 'start', bold: true });
+    } else if (e.type === 'note') {
+      el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, fill: 'transparent', stroke: sel ? COL.sel : 'none', 'stroke-width': 0.2, 'stroke-dasharray': '0.4 0.3' }, grp);
+      label(grp, 0, 0.5, e.label || 'Note', { size: e.fs || 1.5, bold: true });
     }
     return grp;
   }
@@ -109,42 +124,68 @@
     svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     svg.innerHTML = '';
+    svg.style.background = COL.bg;
     const defs = el('defs', {}, svg);
-    const pat = el('pattern', { id: 'g' + svg.id, width: 5, height: 5, patternUnits: 'userSpaceOnUse' }, defs);
-    el('path', { d: 'M5 0H0V5', fill: 'none', stroke: '#ffffff', 'stroke-opacity': 0.09, 'stroke-width': 0.08 }, pat);
+    const pat = el('pattern', { id: 'g' + svg.id, width: 2, height: 2, patternUnits: 'userSpaceOnUse' }, defs);
+    el('path', { d: 'M2 0H0V2', fill: 'none', stroke: COL.grid, 'stroke-opacity': COL.gridOp, 'stroke-width': 0.06 }, pat);
+    const hat = el('pattern', { id: 'h' + svg.id, width: 1.2, height: 1.2, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+    el('path', { d: 'M0 0V1.2', stroke: COL.line, 'stroke-opacity': 0.3, 'stroke-width': 0.2 }, hat);
     el('rect', { x: v.x - 500, y: v.y - 500, width: v.w + 1000, height: v.h + 1000, fill: `url(#g${svg.id})`, 'data-bg': 1 }, svg);
 
-    if (state.footprint.length) el('path', { d: 'M' + state.footprint.map((p) => `${p.x} ${p.y}`).join('L') + 'Z', fill: '#ffffff08', stroke: COL.line, 'stroke-width': 0.5, 'pointer-events': 'none' }, svg);
+    if (state.footprint.length) el('path', { d: 'M' + state.footprint.map((p) => `${p.x} ${p.y}`).join('L') + 'Z', fill: 'none', stroke: COL.line, 'stroke-width': 0.8, 'stroke-linejoin': 'miter', 'pointer-events': 'none' }, svg);
     state.rooms.forEach((r) => {
       const row = a.rooms.find((x) => x.id === r.id);
-      const cls = row ? (row.pct < 0.85 ? '#ff6b6b' : row.pct > 1.25 ? '#f5b942' : '#3ecf8e') : COL.line;
-      el('rect', { x: r.x, y: r.y, width: r.w, height: r.h, fill: 'none', stroke: COL.line, 'stroke-opacity': 0.55, 'stroke-width': 0.15, 'stroke-dasharray': '0.6 0.4', 'pointer-events': 'none' }, svg);
+      const cls = row ? (row.pct < 0.85 ? COL.bad : row.pct > 1.25 ? COL.warn : COL.ok) : COL.line;
+      el('rect', { x: r.x, y: r.y, width: r.w, height: r.h, fill: r.noAC ? `url(#h${svg.id})` : 'none', stroke: COL.line, 'stroke-opacity': r.noAC ? 0.9 : 0.55, 'stroke-width': r.noAC ? 0.5 : 0.15, 'stroke-dasharray': r.noAC ? '' : '0.6 0.4', 'pointer-events': 'none' }, svg);
       label(svg, r.x + r.w / 2, r.y + 1.7, r.name.toUpperCase(), { size: 1.05, bold: true });
+      if (r.noAC) { label(svg, r.x + r.w / 2, r.y + r.h / 2 + 1, 'NO A/C', { size: Math.min(4, r.w / 7), bold: true }); return; }
       label(svg, r.x + r.w / 2, r.y + 3, `${Math.round(H.roomSqft(r))} sf · need ${(row ? row.required / 1000 : 0).toFixed(1)}k`, { size: 0.85 });
       if (row) label(svg, r.x + r.w / 2, r.y + 4.2, `${Math.round(row.pct * 100)}% served`, { size: 0.85, fill: cls });
     });
 
+    (state.walls || []).forEach((w) => {
+      el('line', { x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2, stroke: COL.line, 'stroke-width': w.removed ? 0.9 : 0.7, 'stroke-dasharray': w.removed ? '0.25 0.45' : '', 'stroke-linecap': 'butt', 'pointer-events': 'none' }, svg);
+      if (w.removed) label(svg, (w.x1 + w.x2) / 2, (w.y1 + w.y2) / 2 - 1, 'WALL REMOVED', { size: 0.8, bold: true });
+    });
     const byId = Object.fromEntries(s.equip.map((e) => [e.id, e]));
+    a.eqDia = {};
+    const items = [];
     s.ducts.forEach((d) => {
       const A = byId[d.a], B = byId[d.b];
       if (!A || !B) return;
       const pa = port(A, d.kind), pb = port(B, d.kind);
       const cfm = a.ductFlow[d.id] || 0;
-      const dia = H.ductDia(cfm);
+      const dia = d.dia > 0 ? d.dia : H.ductDia(cfm);
       const toOutlet = B.type === 'supply' || B.type === 'return' || A.type === 'supply' || A.type === 'return';
-      const dpath = d.kind === 'refrig' ? `M${pa.x} ${pa.y}L${pb.x} ${pb.y}` : toOutlet ? ductPath(pa, pb, d.kind) : `M${pa.x} ${pa.y}H${pb.x}V${pb.y}`;
-      const wFt = d.kind === 'refrig' ? 0.2 : Math.max(0.5, dia / 12);
-      if (d.kind !== 'refrig') el('path', { d: dpath, fill: 'none', stroke: COL[d.kind], 'stroke-opacity': 0.22, 'stroke-width': wFt, 'stroke-linejoin': 'round' }, svg);
-      el('path', { d: dpath, fill: 'none', stroke: COL[d.kind], 'stroke-width': d.kind === 'refrig' ? 0.25 : 0.2, 'stroke-dasharray': d.kind === 'refrig' ? '1 0.6' : '', 'stroke-linejoin': 'round', 'pointer-events': 'none' }, svg);
-      if (interactive) el('path', { d: dpath, fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(1.2, wFt), 'data-duct': d.id, style: 'cursor:pointer' }, svg);
-      if (d.kind !== 'refrig' && cfm > 0) label(svg, toOutlet ? pa.x + 0.4 : (pa.x + pb.x) / 2, toOutlet ? (pa.y + pb.y) / 2 : pa.y - 0.6, `${dia}"ø ${Math.round(cfm)}`, { anchor: toOutlet ? 'start' : 'middle', size: 0.75, fill: COL[d.kind] });
-      if (interactive && state.sel === d.id) el('path', { d: dpath, fill: 'none', stroke: '#fff', 'stroke-width': 0.3, 'stroke-dasharray': '0.4 0.4', 'pointer-events': 'none' }, svg);
+      const dpath = d.kind === 'refrig' ? `M${pa.x} ${pa.y}L${pb.x} ${pb.y}` : d.flex ? `M${pa.x} ${pa.y}Q${pa.x} ${pb.y} ${pb.x} ${pb.y}` : toOutlet ? ductPath(pa, pb, d.kind) : `M${pa.x} ${pa.y}H${pb.x}V${pb.y}`;
+      const wFt = d.kind === 'refrig' ? 0.2 : Math.max(0.9, dia / 12);
+      [A, B].forEach((q) => { if ((q.type === 'supply' || q.type === 'return') && dia) a.eqDia[q.id] = Math.max(a.eqDia[q.id] || 0, dia); });
+      items.push({ d, pa, pb, cfm, dia, toOutlet, dpath, wFt });
+    });
+    const rigid = items.filter((p) => p.d.kind !== 'refrig' && !p.d.flex);
+    rigid.forEach((p) => el('path', { d: p.dpath, fill: 'none', stroke: COL[p.d.kind], 'stroke-width': p.wFt + 0.3, 'stroke-linejoin': 'round' }, svg));
+    rigid.forEach((p) => el('path', { d: p.dpath, fill: 'none', stroke: COL.bg, 'stroke-width': Math.max(0.3, p.wFt - 0.05), 'stroke-linejoin': 'round' }, svg));
+    items.forEach((p) => {
+      const d = p.d;
+      if (d.kind === 'refrig') el('path', { d: p.dpath, fill: 'none', stroke: COL.refrig, 'stroke-width': 0.25, 'stroke-dasharray': '1 0.6', 'pointer-events': 'none' }, svg);
+      else if (d.flex) el('path', { d: p.dpath, fill: 'none', stroke: COL[d.kind], 'stroke-width': 0.4, 'stroke-linecap': 'round', 'pointer-events': 'none' }, svg);
+      if (interactive) el('path', { d: p.dpath, fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(1.4, p.wFt), 'data-duct': d.id, style: 'cursor:pointer' }, svg);
+      if (d.kind !== 'refrig' && p.dia > 0) {
+        const txt = `${p.dia}"`;
+        if (d.flex) label(svg, (p.pa.x + p.pb.x) / 2 - 1.2, (p.pa.y + p.pb.y) / 2 - 1, txt, { size: 1.2, bold: true, fill: COL[d.kind] });
+        else if (p.toOutlet) label(svg, p.pa.x + p.wFt / 2 + 0.5, (p.pa.y + p.pb.y) / 2 + 0.4, txt, { size: 1.05, bold: true, anchor: 'start', fill: COL[d.kind] });
+        else label(svg, (p.pa.x + p.pb.x) / 2, p.pa.y - p.wFt / 2 - 0.5, txt, { size: 1.15, bold: true, fill: COL[d.kind] });
+      }
+      if (interactive && state.sel === d.id) el('path', { d: p.dpath, fill: 'none', stroke: COL.sel, 'stroke-width': 0.3, 'stroke-dasharray': '0.4 0.4', 'pointer-events': 'none' }, svg);
     });
     s.equip.forEach((e) => drawEquip(svg, e, a, interactive));
+    label(svg, v.x + 1.5, v.y + v.h * 0.07, key === 'proposed' ? 'After' : 'Before', { size: Math.max(2.2, v.h * 0.06), bold: true, anchor: 'start', fill: COL.warn });
+    if (state.address) label(svg, v.x + v.w - 1.5, v.y + v.h - 1.5, state.address.split(',').slice(0, 2).join(','), { size: Math.max(1.4, v.h * 0.03), bold: true, anchor: 'end' });
     return a;
   }
 
   /* ---------- results / properties ---------- */
+  const pctText = (r) => (r.noAC ? 'no A/C' : r.transfer ? 'transfer' : Math.round(r.pct * 100) + '%');
   const pctCls = (p) => (p < 0.85 ? 'bad' : p > 1.25 ? 'warn' : 'ok');
   function tonsLabel(t) { return (Math.round(t * 10) / 10).toString(); }
   function recommend(a) { return Math.ceil(a.total.requiredTons * 2) / 2; }
@@ -160,7 +201,7 @@
 
   function renderResults() {
     const a = H.analyze(scn(), state.rooms, state.cfg);
-    const rows = a.rooms.map((r) => `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.cfm)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${r.transfer ? 'transfer' : Math.round(r.pct * 100) + '%'}</td></tr>`).join('');
+    const rows = a.rooms.map((r) => `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.cfm)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${pctText(r)}</td></tr>`).join('');
     const t = a.total;
     $('#results').innerHTML = `<h2>${state.active === 'existing' ? 'Existing' : 'Proposed'} system</h2>
       <div class="cards">${statCards(a)}</div>
@@ -175,7 +216,12 @@
     const s = scn();
     const e = s.equip.find((x) => x.id === state.sel);
     const d = s.ducts.find((x) => x.id === state.sel);
-    if (d) { body.className = ''; body.innerHTML = `<p>${d.kind} line</p><button class="x" data-del>Delete</button>`; return; }
+    if (d) {
+      body.className = '';
+      const auto = H.ductDia(H.analyze(s, state.rooms, state.cfg).ductFlow[d.id] || 0);
+      body.innerHTML = `<b>${d.kind} duct</b>` + (d.kind === 'refrig' ? '' : `<label>Diameter (in, blank = auto ${auto || '-'}")<input data-dk="dia" type="number" step="1" value="${d.dia || ''}"></label><label><input data-dk="flex" type="checkbox" ${d.flex ? 'checked' : ''} style="width:auto"> Flex duct (curved)</label>`) + `<button class="x" data-del>Delete</button>`;
+      return;
+    }
     if (!e) { body.className = 'muted'; body.textContent = 'Nothing selected'; return; }
     body.className = '';
     const a = H.analyze(s, state.rooms, state.cfg).eq[e.id] || {};
@@ -184,6 +230,7 @@
     if (e.type === 'condenser' || e.type === 'ahu') h += f('tons', 'Capacity (tons)', 0.5);
     if (e.type === 'ahu') h += f('cfm', 'Airflow override (CFM, blank = 400/ton)', 25) + `<p class="muted">Airflow now: ${Math.round(a.cfm || 0)} CFM</p>`;
     if (e.type === 'head') h += f('btu', 'Capacity (BTU/h)', 1000);
+    if (e.type === 'return') h += `<label>Grille size<input data-k="size" data-t="text" value="${esc(e.size || '20x20')}"></label>`;
     if (e.type === 'supply') h += f('weight', 'Damper balance weight (higher = more air)', 0.5);
     if (e.type === 'supply' || e.type === 'return') h += `<p class="muted">Airflow: ${Math.round(a.cfm || 0)} CFM · ${H.ductDia(a.cfm || 0)}" round duct</p>`;
     h += `<div class="row"><label>X ft<input data-k="x" type="number" step="0.5" value="${e.x}"></label><label>Y ft<input data-k="y" type="number" step="0.5" value="${e.y}"></label></div><button class="x" data-del>Delete item</button>`;
@@ -191,10 +238,15 @@
   }
 
   function renderRooms() {
-    $('#roomTable').innerHTML = '<table><tr><th>Name</th><th>X</th><th>Y</th><th>W</th><th>D</th><th></th></tr>' + state.rooms.map((r) => `<tr data-room="${r.id}"><td><input class="nm" data-rk="name" value="${esc(r.name)}"></td>${['x', 'y', 'w', 'h'].map((k) => `<td><input data-rk="${k}" type="number" step="0.5" value="${r[k]}" style="width:44px"></td>`).join('')}<td><button class="x" data-rdel>×</button></td></tr>`).join('') + '</table>';
+    $('#roomTable').innerHTML = '<table><tr><th>Name</th><th>X</th><th>Y</th><th>W</th><th>D</th><th>A/C</th><th></th></tr>' + state.rooms.map((r) => `<tr data-room="${r.id}"><td><input class="nm" data-rk="name" value="${esc(r.name)}"></td>${['x', 'y', 'w', 'h'].map((k) => `<td><input data-rk="${k}" type="number" step="0.5" value="${r[k]}" style="width:44px"></td>`).join('')}<td><input data-rk="ac" type="checkbox" ${r.noAC ? '' : 'checked'} style="width:auto"></td><td><button class="x" data-rdel>×</button></td></tr>`).join('') + '</table>';
+  }
+
+  function renderWalls() {
+    $('#wallTable').innerHTML = '<table><tr><th>X1</th><th>Y1</th><th>X2</th><th>Y2</th><th>rem</th><th></th></tr>' + (state.walls || []).map((w) => `<tr data-wall="${w.id}">${['x1', 'y1', 'x2', 'y2'].map((k) => `<td><input data-wk="${k}" type="number" step="0.5" value="${w[k]}" style="width:42px"></td>`).join('')}<td><input data-wk="removed" type="checkbox" ${w.removed ? 'checked' : ''} style="width:auto"></td><td><button class="x" data-wdel>×</button></td></tr>`).join('') + '</table>';
   }
 
   function renderAll() {
+    document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
     renderResults(); renderProps();
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
@@ -237,15 +289,15 @@
     s.equip = [ahu, cond]; s.ducts = [{ id: uid('d'), kind: 'refrig', a: cond.id, b: ahu.id }];
     const regs = [];
     rooms.forEach((r) => {
-      if (r === hall) return;
+      if (r === hall || r.noAC) return;
       const n = r.w * r.h > 300 ? 2 : 1;
       const wt = Math.max(0.5, Math.round((H.roomLoadBtu(r, state.cfg) / n / 1000) * 10) / 10);
       for (let i = 0; i < n; i++) regs.push(mk('supply', r.x + (r.w * (i + 1)) / (n + 1), r.y + r.h / 2 + 2.5, { room: r.id, weight: wt }));
     });
     s.equip.push(...regs);
-    const ret = mk('return', hall.x + hall.w * 0.9, hall.y + hall.h / 2);
+    const ret = mk('return', ahuAt.x + 4, hall.y + hall.h + 4, { size: '20x20' });
     s.equip.push(ret);
-    s.ducts.push({ id: uid('d'), kind: 'return', a: ret.id, b: ahu.id });
+    s.ducts.push({ id: uid('d'), kind: 'return', a: ret.id, b: ahu.id, flex: true });
     if (opts.splitters) {
       regs.sort((p, q) => p.x - q.x);
       for (let i = 0; i < regs.length; i += 3) {
@@ -260,12 +312,12 @@
   }
 
   function setFootprintAndRooms(fp, beds, baths) {
-    state.footprint = fp;
+    state.footprint = fp; state.walls = [];
     const w = Math.max(...fp.map((p) => p.x)), d = Math.max(...fp.map((p) => p.y));
     state.rooms = autoRooms(w, d, beds, baths);
     autoLayout('existing', { tons: state.curTons });
     autoLayout('proposed', { tons: Math.max(1.5, state.curTons - 1), splitters: true });
-    fit(); renderRooms(); renderAll();
+    fit(); renderRooms(); renderWalls(); renderAll();
   }
 
   function loadSample() {
@@ -287,6 +339,8 @@
     const e = { id: uid('e'), type, x: snap(v.x + v.w / 2), y: snap(v.y + v.h / 2), label: '' };
     if (type === 'condenser' || type === 'ahu') e.tons = state.curTons;
     if (type === 'head') e.btu = 12000;
+    if (type === 'note') e.label = 'Note';
+    if (type === 'return') e.size = '20x20';
     scn().equip.push(e); state.sel = e.id; renderAll();
   }
 
@@ -357,7 +411,7 @@
     $('#present').hidden = false;
     renderPlan($('#planA'), 'existing', false); renderPlan($('#planB'), 'proposed', false);
     $('#statA').innerHTML = statCards(A); $('#statB').innerHTML = statCards(B);
-    const rows = A.rooms.map((r, i) => { const q = B.rooms[i]; return `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${Math.round(r.pct * 100)}%</td><td>${Math.round(q.delivered)}</td><td class="${pctCls(q.pct)}">${Math.round(q.pct * 100)}%</td></tr>`; }).join('');
+    const rows = A.rooms.map((r, i) => { const q = B.rooms[i]; return `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${pctText(r)}</td><td>${Math.round(q.delivered)}</td><td class="${pctCls(q.pct)}">${pctText(q)}</td></tr>`; }).join('');
     $('#pTable').innerHTML = `<table><tr><th>Room</th><th>sq ft</th><th>Needed BTU</th><th>Existing BTU</th><th>Existing match</th><th>Proposed BTU</th><th>Proposed match</th></tr>${rows}</table>
       <p>Condenser size change: <b>${tonsLabel(A.total.installedTons)} ton &rarr; ${tonsLabel(B.total.installedTons)} ton</b> (${Math.round(A.total.sqftPerTon)} &rarr; ${Math.round(B.total.sqftPerTon)} sq ft per ton).</p>`;
   }
@@ -376,6 +430,18 @@
     $('#pClose').onclick = () => { $('#present').hidden = true; };
     $('#pPrint').onclick = () => window.print();
     $('#btnSample').onclick = loadSample;
+    $('#btnTheme').onclick = () => { state.theme = state.theme === 'paper' ? 'blueprint' : 'paper'; applyTheme(); renderAll(); };
+    $('#btnAddWall').onclick = () => { state.walls.push({ id: uid('w'), x1: 0, y1: 0, x2: 10, y2: 0, removed: false }); renderWalls(); renderAll(); };
+    $('#wallTable').addEventListener('input', (e) => {
+      const tr = e.target.closest('[data-wall]'); if (!tr) return;
+      const w = state.walls.find((x) => x.id === tr.dataset.wall), k = e.target.dataset.wk;
+      w[k] = k === 'removed' ? e.target.checked : num(e.target.value, w[k]);
+      refreshLight();
+    });
+    $('#wallTable').addEventListener('click', (e) => {
+      if (!e.target.matches('[data-wdel]')) return;
+      state.walls = state.walls.filter((w) => w.id !== e.target.closest('[data-wall]').dataset.wall); renderWalls(); renderAll();
+    });
     $('#btnAddRoom').onclick = () => { state.rooms.push({ id: uid('r'), name: 'Room', x: 0, y: 0, w: 12, h: 12, ceiling: 8 }); renderRooms(); renderAll(); };
     $('#btnRect').onclick = () => setFootprintAndRooms(L.rectFootprint(num($('#rectW').value, 54), num($('#rectD').value, 36)), Math.max(1, num($('#beds').value, 3)), Math.max(1, num($('#baths').value, 2)));
 
@@ -418,7 +484,7 @@
     $('#roomTable').addEventListener('input', (e) => {
       const tr = e.target.closest('[data-room]'); if (!tr) return;
       const r = state.rooms.find((x) => x.id === tr.dataset.room), k = e.target.dataset.rk;
-      r[k] = k === 'name' ? e.target.value : num(e.target.value, r[k]);
+      if (k === 'ac') r.noAC = !e.target.checked; else r[k] = k === 'name' ? e.target.value : num(e.target.value, r[k]);
       refreshLight();
     });
     $('#roomTable').addEventListener('click', (e) => {
@@ -426,6 +492,12 @@
       state.rooms = state.rooms.filter((r) => r.id !== e.target.closest('[data-room]').dataset.room); renderRooms(); renderAll();
     });
     $('#propBody').addEventListener('input', (e) => {
+      const dk = e.target.dataset.dk;
+      if (dk) {
+        const du = scn().ducts.find((x) => x.id === state.sel); if (!du) return;
+        du[dk] = dk === 'flex' ? e.target.checked : (e.target.value === '' ? null : num(e.target.value, 0));
+        refreshLight(); return;
+      }
       const k = e.target.dataset.k; if (!k) return;
       const eq = scn().equip.find((x) => x.id === state.sel); if (!eq) return;
       eq[k] = e.target.dataset.t === 'text' ? e.target.value : (e.target.value === '' ? null : num(e.target.value, eq[k]));
@@ -438,6 +510,7 @@
   if (load()) {
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
     $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
-    if (!state.view) fit(); renderRooms(); renderAll();
+    state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
+    if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
   } else loadSample();
 })();

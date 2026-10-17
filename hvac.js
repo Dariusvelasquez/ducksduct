@@ -121,10 +121,11 @@
       const headBtu = inside.filter((e) => e.type === 'head').reduce((s, e) => s + eq[e.id].btu, 0);
       const delivered = cfm * BTU_PER_CFM + headBtu;
       const outlets = inside.filter((e) => e.type === 'supply' || e.type === 'head').length;
-      if (!outlets && !/hall|corridor/i.test(r.name)) warnings.push(`${r.name} has no supply outlet`);
+      if (!outlets && !r.noAC && !/hall|corridor/i.test(r.name)) warnings.push(`${r.name} has no supply outlet`);
       // A corridor with no outlet is conditioned by transfer air from its neighbours, not by its own register.
-      const transfer = !outlets && /hall|corridor/i.test(r.name);
-      return { id: r.id, name: r.name, sqft: roomSqft(r), required: transfer ? 0 : required, cfm, delivered, pct: transfer ? 1 : required ? delivered / required : 0, outlets, transfer };
+      const noAC = !!r.noAC;
+      const transfer = noAC || (!outlets && /hall|corridor/i.test(r.name));
+      return { id: r.id, name: r.name, sqft: roomSqft(r), required: transfer ? 0 : required, cfm, delivered, pct: transfer ? 1 : required ? delivered / required : 0, outlets, transfer, noAC };
     });
 
     const requiredBtu = roomRows.reduce((s, r) => s + r.required, 0);

@@ -9,3 +9,5 @@ Browser-based HVAC duct layout and sizing tool. Open `index.html` (no build step
 - Customer presentation view (side by side, printable).
 
 Estimates use an area-based BTU/sqft rule of thumb, not Manual J.
+
+Paper (default, hand-drawn-sketch style) and blueprint themes; No A/C rooms, removed walls, flex duct, duct diameter overrides, grille sizes, scuttle and note markers.

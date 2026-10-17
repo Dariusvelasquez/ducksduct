@@ -14,6 +14,7 @@
     <button data-scn="proposed">Proposed system</button>
   </div>
   <div class="grow"></div>
+  <button id="btnTheme" title="Switch between paper and blueprint look">Paper / Blueprint</button>
   <button id="btnCopy" title="Copy the existing layout into the proposed scenario">Copy existing &rarr; proposed</button>
   <button id="btnPresent" class="primary">Customer presentation</button>
 </header>
@@ -55,6 +56,14 @@
       <h2>Rooms <small>(ft)</small></h2>
       <div id="roomTable"></div>
       <button id="btnAddRoom">+ Room</button>
+      <small>A/C box unchecked = room gets no air (drop ceiling, etc.).</small>
+    </section>
+
+    <section>
+      <h2>Walls <small>(ft)</small></h2>
+      <div id="wallTable"></div>
+      <button id="btnAddWall">+ Wall</button>
+      <small>Tick "rem" for a removed wall (drawn hatched).</small>
     </section>
   </aside>
 
@@ -73,6 +82,8 @@
       <button data-add="return">+ Intake</button>
       <button data-add="splitter">+ Splitter</button>
       <button data-add="head">+ Mini-split</button>
+      <button data-add="scuttle">+ Scuttle</button>
+      <button data-add="note">+ Note</button>
       <span class="sep"></span>
       <button id="btnAuto">Auto layout</button>
       <button id="btnFit">Fit</button>
