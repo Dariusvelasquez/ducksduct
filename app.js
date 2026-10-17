@@ -23,6 +23,19 @@
     active: 'existing', theme: 'paper', walls: [], listing: {}, underlay: null, draft: null, calib: [], cfg: { btuPerSqft: 30 }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
+  // In-page replacement for confirm()/prompt(), which hosted pages cannot show.
+  function ask(msg, withInput) {
+    return new Promise((res) => {
+      const d = $('#dlg'), inp = $('#dlgIn');
+      $('#dlgMsg').textContent = msg; inp.hidden = !withInput; inp.value = ''; d.hidden = false;
+      if (withInput) inp.focus();
+      const done = (v) => { d.hidden = true; $('#dlgOk').onclick = $('#dlgNo').onclick = inp.onkeydown = null; res(v); };
+      $('#dlgOk').onclick = () => done(withInput ? inp.value : true);
+      $('#dlgNo').onclick = () => done(withInput ? null : false);
+      inp.onkeydown = (e) => { if (e.key === 'Enter') done(inp.value); if (e.key === 'Escape') done(null); };
+    });
+  }
+
   /* ---------- persistence ---------- */
   function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...state, pending: null, sel: null, underlay: null, draft: null, calib: [] })); } catch (e) {} }
   function load() {
@@ -486,10 +499,13 @@
       else if (state.tool === 'calib' && state.underlay) {
         state.calib.push({ x: p.x, y: p.y });
         if (state.calib.length === 2) {
-          const [a, b] = state.calib, ft = parseFloat(prompt('Real-world distance between the two points (feet)?'));
-          const meas = Math.hypot(b.x - a.x, b.y - a.y);
-          if (ft > 0 && meas > 0) { const f = ft / meas, u = state.underlay; u.x = a.x - (a.x - u.x) * f; u.y = a.y - (a.y - u.y) * f; u.w *= f; u.h *= f; }
-          state.calib = []; state.tool = 'select';
+          const [a, b] = state.calib, meas = Math.hypot(b.x - a.x, b.y - a.y);
+          ask('Real-world distance between the two points (feet)?', true).then((v) => {
+            const ft = parseFloat(v);
+            if (ft > 0 && meas > 0) { const f = ft / meas, u = state.underlay; u.x = a.x - (a.x - u.x) * f; u.y = a.y - (a.y - u.y) * f; u.w *= f; u.h *= f; }
+            state.calib = []; state.tool = 'select'; renderAll();
+          });
+          return;
         }
         renderAll();
       }
@@ -546,8 +562,8 @@
     $('#imgShow').onchange = (e) => { if (state.underlay) { state.underlay.show = e.target.checked; renderAll(); } };
     $('#imgOp').oninput = (e) => { if (state.underlay) { state.underlay.op = e.target.value / 100; refreshLight(); } };
     $('#btnRmImg').onclick = () => { state.underlay = null; renderAll(); };
-    $('#btnClearRooms').onclick = () => {
-      if (!confirm('Start a blank plan? This removes all rooms, walls, the outline and all equipment in both scenarios.')) return;
+    $('#btnClearRooms').onclick = async () => {
+      if (!(await ask('Start a blank plan? This removes all rooms, walls, the outline and all equipment in both scenarios.'))) return;
       state.rooms = []; state.walls = []; state.footprint = []; state.record = null;
       ['existing', 'proposed'].forEach((k) => (state.scenarios[k] = { equip: [], ducts: [] }));
       renderRooms(); renderWalls(); renderAll();
@@ -558,11 +574,10 @@
     $('#toolSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { state.tool = b.dataset.tool; state.pending = null; $('#hint').textContent = state.tool === 'select' ? 'Drag equipment to move it.' : state.tool === 'room' ? 'Drag a rectangle over a room on the image. Rename and fine-tune it in the Rooms table.' : state.tool === 'wall' ? 'Drag to draw a wall (snaps horizontal or vertical).' : 'Click the first item, then the second item to connect them.'; renderAll(); } });
     document.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => addEquip(b.dataset.add)));
     $('#btnFit').onclick = () => { fit(); renderAll(); };
-    $('#btnAuto').onclick = () => { if (!state.rooms.length) return alert('Add or trace rooms first.'); if (confirm('Replace the ' + state.active + ' layout with an automatic one?')) { autoLayout(state.active, { splitters: state.active === 'proposed' }); renderAll(); } };
+    $('#btnAuto').onclick = async () => { if (!state.rooms.length) return setStatus('Add or trace rooms first.'); if (await ask('Replace the ' + state.active + ' layout with an automatic one?')) { autoLayout(state.active, { splitters: state.active === 'proposed' }); renderAll(); } };
     $('#btnCopy').onclick = () => { state.scenarios.proposed = JSON.parse(JSON.stringify(state.scenarios.existing)); state.active = 'proposed'; renderAll(); };
     $('#btnPresent').onclick = present;
     $('#pClose').onclick = () => { $('#present').hidden = true; };
-    $('#pPrint').onclick = () => window.print();
     $('#btnSample').onclick = loadSample;
     $('#btnDiag').onclick = () => loadExample(window.EXAMPLES.diagonal);
     $('#btnTheme').onclick = () => { state.theme = state.theme === 'paper' ? 'blueprint' : 'paper'; applyTheme(); renderAll(); };
@@ -619,7 +634,7 @@
         if (r.footprint && (state.generated || !state.rooms.length)) { setFootprintAndRooms(r.footprint, num($('#beds').value, 3), num($('#baths').value, 2)); }
         else { if (r.footprint) r.notes.push('Existing rooms kept (traced or example). Use Blank plan to regenerate from the outline.'); renderAll(); }
         setStatus((r.footprint ? 'Building outline loaded. ' : 'No outline, use the rectangle option. ') + r.notes.join(' '));
-      } catch (e) { setStatus('Lookup failed: ' + e.message + '. You can still draw a rectangle footprint.'); }
+      } catch (e) { setStatus('Lookup failed (' + e.message + '). Address and county lookups need direct internet access, which some hosted pages block. Open the downloaded index.html, or draw a rectangle footprint.'); }
       $('#btnLookup').disabled = false;
     };
 
@@ -655,5 +670,5 @@
     ['sqft', 'beds', 'baths'].forEach((k) => { const el2 = $('#ls' + k[0].toUpperCase() + k.slice(1)); if (el2 && state.listing[k] != null) el2.value = state.listing[k]; });
     state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
     if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
-  } else loadSample();
+  } else loadExample(window.EXAMPLES.diagonal);
 })();

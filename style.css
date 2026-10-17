@@ -40,6 +40,11 @@ td input{padding:2px 3px;text-align:right}td input.nm{text-align:left}
 .card b{display:block;font-size:18px}.card span{color:var(--mut);font-size:11px}
 .warns{margin:8px 0;padding-left:16px;color:var(--warn);font-size:12px}
 .x{background:none;border:0;color:var(--bad);padding:0 4px}
+#dlg{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:30}
+#dlg[hidden]{display:none}
+#dlg .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;width:min(420px,90vw)}
+#dlg .row{justify-content:flex-end;margin-top:10px}#dlg .row>*{flex:0 0 auto}
+:root{color-scheme:dark}
 /* presentation */
 #present{position:fixed;inset:0;background:var(--bg);overflow:auto;padding:18px 28px;z-index:10}
 #present[hidden]{display:none}
