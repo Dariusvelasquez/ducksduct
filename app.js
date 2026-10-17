@@ -199,16 +199,35 @@
       <div class="card"><b class="${overCls}">${Math.round(t.oversize * 100)}%</b><span>Installed vs. need</span></div>`;
   }
 
+  function recordNote() {
+    const r = state.record; if (!r) return '';
+    const drawn = Math.round(state.rooms.reduce((t, x) => t + x.w * x.h, 0));
+    const bits = [r.county + ' record', r.sqft && `${r.sqft} sf heated`, r.beds && `${r.beds} bd`, r.baths && `${r.baths} ba`, r.yearBuilt && `built ${r.yearBuilt}`].filter(Boolean).join(' · ');
+    const off = r.sqft && Math.abs(drawn - r.sqft) / r.sqft > 0.05;
+    return `<p class="muted">${esc(bits)}${r.note ? ' · ' + esc(r.note) : ''}${off ? `<br>Drawn rooms total ${drawn} sf vs ${r.sqft} sf on record. <button id="btnScale">Scale rooms to record</button>` : ''}</p>`;
+  }
+
   function renderResults() {
     const a = H.analyze(scn(), state.rooms, state.cfg);
     const rows = a.rooms.map((r) => `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.cfm)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${pctText(r)}</td></tr>`).join('');
     const t = a.total;
-    $('#results').innerHTML = `<h2>${state.active === 'existing' ? 'Existing' : 'Proposed'} system</h2>
+    $('#results').innerHTML = `<h2>${state.active === 'existing' ? 'Existing' : 'Proposed'} system</h2>${recordNote()}
       <div class="cards">${statCards(a)}</div>
       <table><tr><th>Room</th><th>sf</th><th>Need BTU</th><th>CFM</th><th>Out BTU</th><th>Match</th></tr>${rows}
       <tr><td><b>Total</b></td><td>${Math.round(t.sqft)}</td><td>${Math.round(t.requiredBtu)}</td><td>${Math.round(t.systemCfm)}</td><td>${Math.round(t.deliveredBtu)}</td><td></td></tr></table>
       <p class="muted">Recommended capacity for this footprint: <b>${recommend(a)} ton</b> (rule-of-thumb ${state.cfg.btuPerSqft} BTU/sqft). Match = delivered / needed: under 85% is starved, over 125% is oversupplied.</p>
       ${a.warnings.length ? '<ul class="warns">' + a.warnings.map((w) => `<li>${esc(w)}</li>`).join('') + '</ul>' : ''}`;
+  }
+
+  function scaleToRecord() {
+    const r = state.record; if (!r || !r.sqft) return;
+    const drawn = state.rooms.reduce((t, x) => t + x.w * x.h, 0), f = Math.sqrt(r.sqft / drawn);
+    const sc = (v) => +(v * f).toFixed(1);
+    state.rooms.forEach((x) => { x.x = sc(x.x); x.y = sc(x.y); x.w = sc(x.w); x.h = sc(x.h); });
+    state.footprint.forEach((q) => { q.x = sc(q.x); q.y = sc(q.y); });
+    state.walls.forEach((w) => { w.x1 = sc(w.x1); w.y1 = sc(w.y1); w.x2 = sc(w.x2); w.y2 = sc(w.y2); });
+    ['existing', 'proposed'].forEach((k) => state.scenarios[k].equip.forEach((e) => { e.x = sc(e.x); e.y = sc(e.y); }));
+    fit(); renderRooms(); renderWalls(); renderAll();
   }
 
   function renderProps() {
@@ -467,6 +486,7 @@
       renderAll();
     };
 
+    $('#results').addEventListener('click', (e) => { if (e.target.id === 'btnScale') scaleToRecord(); });
     $('#btnLookup').onclick = async () => {
       const addr = $('#address').value.trim();
       if (!addr) return setStatus('Enter an address first.');
@@ -475,7 +495,13 @@
         const r = await L.lookup(addr, $('#token').value.trim(), setStatus);
         state.address = r.display || addr;
         if (r.parcelId) { state.parcel = r.parcelId; $('#parcel').value = r.parcelId; }
+        state.record = r.record || null;
+        if (state.record) {
+          if (state.record.beds) $('#beds').value = state.record.beds;
+          if (state.record.baths) $('#baths').value = Math.max(1, Math.round(state.record.baths));
+        }
         if (r.footprint) { setFootprintAndRooms(r.footprint, num($('#beds').value, 3), num($('#baths').value, 2)); }
+        else renderAll();
         setStatus((r.footprint ? 'Building outline loaded. ' : 'No outline, use the rectangle option. ') + r.notes.join(' '));
       } catch (e) { setStatus('Lookup failed: ' + e.message + '. You can still draw a rectangle footprint.'); }
       $('#btnLookup').disabled = false;

@@ -56,7 +56,44 @@
     if (!rings.length) throw new Error('No building outline found at that point');
     const here = { lat, lon };
     const hit = rings.find((r) => pointInPoly(here, r)) || rings[0];
-    return toFeet(hit);
+    const center = { lat: hit.reduce((t, c) => t + c.lat, 0) / hit.length, lon: hit.reduce((t, c) => t + c.lon, 0) / hit.length };
+    return { pts: toFeet(hit), center };
+  }
+
+  /* ---- Public parcel records (Tampa Bay counties) ---- */
+  const HILLS = 'https://maps.hillsboroughcounty.org/arcgis/rest/services/InfoLayers/HC_ParcelsPublic/MapServer/0';
+  const SARASOTA = 'https://services1.arcgis.com/9lDFdeC4JIBgML6L/ArcGIS/rest/services/SarasotaCountyParcels2023_TSLU/FeatureServer/0';
+  const STATE = 'https://gis.fdacs.gov/mapping/rest/services/GIO_Parcels_for_OAWP_Optimized/FeatureServer/0';
+  const COUNTY = { 57: 'Hillsborough', 62: 'Pinellas', 68: 'Sarasota' };
+
+  async function arcPoint(url, lat, lon, fields) {
+    const qs = new URLSearchParams({ geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outFields: fields, returnGeometry: 'false', f: 'json' });
+    const r = await fetch(url + '/query?' + qs);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message);
+    return j.features.map((f) => f.attributes);
+  }
+  const pos = (v) => (v > 0 ? v : null);
+
+  // Returns { county, parcelId, sqft, beds, baths, stories, yearBuilt, source, note } or null.
+  async function countyParcel(lat, lon) {
+    const [h, sa, st] = await Promise.allSettled([
+      arcPoint(HILLS, lat, lon, 'FOLIO_NUMB,FOLIO,SITE_ADDR,tBEDS,tBATHS,tSTORIES,HEAT_AR,ACT,DOR_CODE'),
+      arcPoint(SARASOTA, lat, lon, 'PARCELID,PHYADDR1,TOTLVGAREA,ACTYRBLT,NOBULDNG,NORESUNTS'),
+      arcPoint(STATE, lat, lon, 'CO_NO,PARCEL_ID,DOR_UC'),
+    ]);
+    const hv = h.status === 'fulfilled' && h.value.sort((a, b) => (b.HEAT_AR || 0) - (a.HEAT_AR || 0))[0];
+    if (hv) return { county: 'Hillsborough', parcelId: hv.FOLIO_NUMB || hv.FOLIO, sqft: pos(hv.HEAT_AR), beds: pos(hv.tBEDS), baths: pos(hv.tBATHS), stories: pos(hv.tSTORIES), yearBuilt: pos(hv.ACT), address: hv.SITE_ADDR, source: 'Hillsborough County Property Appraiser' };
+    const sv = sa.status === 'fulfilled' && sa.value.sort((a, b) => (b.TOTLVGAREA || 0) - (a.TOTLVGAREA || 0))[0];
+    const stv = st.status === 'fulfilled' && st.value[0];
+    if (sv) return { county: 'Sarasota', parcelId: sv.PARCELID, sqft: pos(sv.TOTLVGAREA), yearBuilt: pos(sv.ACTYRBLT), address: sv.PHYADDR1, source: 'Sarasota County parcel data (2023 vintage)' };
+    if (stv) {
+      const county = COUNTY[stv.CO_NO] || 'County ' + stv.CO_NO;
+      const id = stv.PARCEL_ID || '';
+      return { county, parcelId: county === 'Pinellas' ? id.replace(/ /g, '-') : id, source: 'Florida DOR statewide parcels', note: 'No building details in this layer, so enter beds/baths/sq ft yourself.' };
+    }
+    return null;
   }
 
   // Parcel ID / folio from Regrid. Field names are read defensively; returns null without a token.
@@ -80,13 +117,20 @@
     const g = await geocode(address);
     out.lat = g.lat; out.lon = g.lon; out.display = g.display;
     say('Fetching building outline...');
-    try { out.footprint = await footprint(g.lat, g.lon); } catch (e) { out.notes.push('Footprint: ' + e.message); }
-    if (token) {
+    let pt = { lat: g.lat, lon: g.lon };
+    try { const f = await footprint(g.lat, g.lon); out.footprint = f.pts; pt = f.center; } catch (e) { out.notes.push('Footprint: ' + e.message); }
+    say('Fetching county parcel record...');
+    try {
+      out.record = await countyParcel(pt.lat, pt.lon);
+      if (out.record) out.parcelId = out.record.parcelId || '';
+      else out.notes.push('No county parcel found at this point.');
+    } catch (e) { out.notes.push('Parcel: ' + e.message); }
+    if (!out.parcelId && token) {
       say('Fetching parcel record...');
       try { const p = await parcel(address, token); if (p) out.parcelId = p.parcelId; else out.notes.push('Parcel: no record found'); } catch (e) { out.notes.push('Parcel: ' + e.message); }
-    } else out.notes.push('Parcel ID needs a Regrid API token (or type the folio # in manually).');
+    } else if (!out.parcelId) out.notes.push('Type the parcel/folio # in manually.');
     return out;
   }
 
-  root.Lookup = { lookup, geocode, footprint, parcel, rectFootprint, toFeet };
+  root.Lookup = { lookup, geocode, footprint, parcel, countyParcel, rectFootprint, toFeet };
 })(window);
