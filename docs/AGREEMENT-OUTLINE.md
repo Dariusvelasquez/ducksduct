@@ -9,6 +9,6 @@ This is a checklist of topics, not legal advice. Have a lawyer draft and review 
 5. **No warranty on engineering results.** The tool produces preliminary estimates, not a Manual J. The buyer is responsible for engineering judgment, permits and code compliance. Add a limit on liability, and a note that the buyer should confirm its own insurance (errors and omissions) covers use of the tool.
 6. **Third-party data.** Parcel, geocoding and map data come from public sources under their own terms and can change. The buyer is responsible for complying with those terms and for any paid services it adds. Credit OpenStreetMap.
 7. **Customer data.** Jobs are stored in each user's browser. If the buyer adds accounts or a database later, they own privacy and security for that data.
-8. **Confidentiality, and what is not included.** No real customer addresses or job data in the delivered source (the export script excludes them). Confirm this before handing over.
+8. **Confidentiality, and what is not included.** No real customer addresses or job data in the delivered source. Confirm this before handing over, and deliver the export zip (`npm run export`), never the git repository, since git history can contain earlier data.
 9. **Name and branding.** The buyer rebrands freely; you keep no brand rights.
 10. **Governing law, termination, and who signs.**

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* Creates a clean copy of the source for the buyer in handoff/<name>/ (and a .zip if `zip` is installed).
- * Excludes git history, private/ (real-job examples), dist/ and handoff/ itself. Run: npm run export */
+ * Excludes git history, private/ (if present), dist/ and handoff/ itself. Run: npm run export */
 const fs = require('fs'), path = require('path'), vm = require('vm'), cp = require('child_process');
 const root = path.join(__dirname, '..');
 const ctx = { window: {} }; vm.runInNewContext(fs.readFileSync(path.join(root, 'config.js'), 'utf8'), ctx);

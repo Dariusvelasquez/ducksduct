@@ -16,11 +16,10 @@ window.BRAND = {
   disclaimer: 'Preliminary sizing estimate from room area and a rule-of-thumb BTU/sqft factor, not an ACCA Manual J load calculation. Confirm with a full load calculation before final equipment selection.',
   defaults: { btuPerSqft: 30, theme: 'paper' },   // theme: 'paper' or 'blueprint'
   features: {
-    sample: true,                     // "Sample home" button
-    examples: false,                  // real-job examples (demo builds only)
+    sample: true,                     // "Load example home" button (an imaginary house)
     lookup: true,                     // address / county parcel lookup (needs internet access to the data servers)
     print: true,                      // Print / save PDF button in the presentation
   },
-  storageKey: 'ductlayout.v1',        // change per brand so two installs on one domain do not share saved jobs
+  storageKey: 'ductlayout.v2',        // change per brand so two installs on one domain do not share saved jobs
   poweredBy: '',                      // optional small line at the bottom of proposals, e.g. 'Software by ...'
 };

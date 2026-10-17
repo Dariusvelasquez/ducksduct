@@ -8,8 +8,8 @@
     name: BR.name || 'HVAC Designer', logo: BR.logo || '', accent: BR.accent || '', company: BR.company || {},
     disclaimer: BR.disclaimer || 'Preliminary sizing estimate, not an ACCA Manual J load calculation.',
     defaults: Object.assign({ btuPerSqft: 30, theme: 'paper' }, BR.defaults),
-    features: Object.assign({ sample: true, examples: false, lookup: true, print: true }, BR.features),
-    storageKey: BR.storageKey || 'ductlayout.v1', poweredBy: BR.poweredBy || '',
+    features: Object.assign({ sample: true, lookup: true, print: true }, BR.features),
+    storageKey: BR.storageKey || 'ductlayout.v2', poweredBy: BR.poweredBy || '',
   };
   const KEY = BX.storageKey;
   const THEMES = {
@@ -223,6 +223,11 @@
       state.calib.forEach((c) => el('circle', { cx: c.x, cy: c.y, r: 0.6, fill: COL.sel, 'pointer-events': 'none' }, svg));
       if (dr && dr.kind === 'room') label(svg, dr.x + dr.w / 2, dr.y + dr.h / 2, `${dr.w} × ${dr.h} ft`, { size: 1.1, bold: true });
     }
+    if (interactive && !state.rooms.length && !state.footprint.length && !s.equip.length) {
+      const cx = v.x + v.w / 2, cy = v.y + v.h / 2, k = Math.max(1, v.w / 60);
+      label(svg, cx, cy - 3 * k, 'Start a new plan', { size: 2.2 * k, bold: true });
+      ['Enter an address and press Look up,', 'draw a rectangle footprint,', 'upload a floor plan image to trace,', 'or press Load example home.'].forEach((t, i) => label(svg, cx, cy + (1.5 + i * 2.4) * k, t, { size: 1.5 * k }));
+    }
     label(svg, v.x + 1.5, v.y + v.h * 0.07, key === 'proposed' ? 'After' : 'Before', { size: Math.max(2.2, v.h * 0.06), bold: true, anchor: 'start', fill: COL.warn });
     if (state.address) label(svg, v.x + v.w - 1.5, v.y + v.h - 1.5, state.address.split(',').slice(0, 2).join(','), { size: Math.max(1.4, v.h * 0.03), bold: true, anchor: 'end' });
     return a;
@@ -252,6 +257,7 @@
   }
 
   function renderResults() {
+    if (!state.rooms.length) { $('#results').innerHTML = `<h2>${state.active === 'existing' ? 'Existing' : 'Proposed'} system</h2><p class="muted">Add or trace rooms to see the capacity comparison.</p>`; return; }
     const a = H.analyze(scn(), state.rooms, state.cfg);
     const rows = a.rooms.map((r) => `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.cfm)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${pctText(r)}</td></tr>`).join('');
     const t = a.total;
@@ -402,28 +408,6 @@
     state.rooms = autoRooms(w, d, beds, baths);
     autoLayout('existing', { tons: state.curTons });
     autoLayout('proposed', { tons: Math.max(1.5, state.curTons - 1), splitters: true });
-    fit(); renderRooms(); renderWalls(); renderAll();
-  }
-
-  // Real job recreated from a hand sketch. Proposed = the sketched "After" layout; Existing = placeholder (same duct layout, 3 ton).
-  function loadExample(ex) {
-    const ids = {};
-    const id = (k, p) => ids[k] || (ids[k] = uid(p));
-    state.address = ex.address; state.parcel = ex.parcel; state.model = ''; state.curTons = 3; state.generated = false;
-    state.footprint = ex.footprint.map((p) => ({ ...p }));
-    state.rooms = ex.rooms.map((r) => ({ id: id(r.k, 'r'), name: r.name, x: r.x, y: r.y, w: r.w, h: r.h, ceiling: 8, noAC: !!r.noAC }));
-    state.walls = ex.walls.map((w) => ({ id: uid('w'), ...w }));
-    const build = (tons, keepSizes) => ({
-      equip: ex.equip.map((e) => { const { k, ...rest } = e; const o = { id: id(k, 'e'), ...rest }; if (o.type === 'ahu' || o.type === 'condenser') o.tons = tons; return o; }),
-      ducts: ex.ducts.map((d) => { const o = { id: uid('d'), kind: d.kind, a: id(d.a, 'e'), b: id(d.b, 'e') }; if (d.flex) o.flex = true; if (keepSizes && d.dia) o.dia = d.dia; return o; }),
-    });
-    state.scenarios.proposed = build(2, true);
-    state.scenarios.existing = build(3, false);
-    state.record = { county: 'Pinellas', parcelId: ex.parcel, source: 'Florida DOR statewide parcels', note: 'Parcel number matched exactly. Pinellas data has no living area: enter the listing sq ft under Cross-check and press Scale.' };
-    state.listing = {}; ['lsSqft', 'lsBeds', 'lsBaths'].forEach((i) => ($('#' + i).value = ''));
-    state.active = 'proposed'; state.sel = state.pending = null; state.underlay = null;
-    $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = ''; $('#curTons').value = '3';
-    setStatus('Example loaded. Scale assumed from the building outline (~27 ft wide). Confirm with the listing sq ft.');
     fit(); renderRooms(); renderWalls(); renderAll();
   }
 
@@ -652,7 +636,6 @@
     $('#btnPresent').onclick = present;
     $('#pClose').onclick = () => { $('#present').hidden = true; };
     $('#btnSample').onclick = loadSample;
-    $('#btnDiag').onclick = () => loadExample(window.EXAMPLES.demo);
     $('#pPrint').onclick = () => window.print();
     $('#btnTheme').onclick = () => { state.theme = state.theme === 'paper' ? 'blueprint' : 'paper'; applyTheme(); renderAll(); };
     $('#btnAddWall').onclick = () => { state.walls.push({ id: uid('w'), x1: 0, y1: 0, x2: 10, y2: 0, removed: false }); renderWalls(); renderAll(); };
@@ -746,7 +729,6 @@
     if (BX.logo) { $('#brandLogo').src = BX.logo; $('#brandLogo').hidden = false; }
     if (BX.accent) document.documentElement.style.setProperty('--acc', BX.accent);
     $('#btnSample').hidden = !BX.features.sample;
-    $('#btnDiag').hidden = !(BX.features.examples && window.EXAMPLES && window.EXAMPLES.demo);
     $('#btnLookup').hidden = !BX.features.lookup;
     $('#pPrint').hidden = !BX.features.print;
     if (!BX.features.lookup) setStatus('Address lookup is not available in this build. Type the folio # and draw the outline instead.');
@@ -759,6 +741,5 @@
     ['sqft', 'beds', 'baths'].forEach((k) => { const el2 = $('#ls' + k[0].toUpperCase() + k.slice(1)); if (el2 && state.listing[k] != null) el2.value = state.listing[k]; });
     state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
     if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
-  } else if (BX.features.examples && window.EXAMPLES && window.EXAMPLES.demo) loadExample(window.EXAMPLES.demo);
-  else loadSample();
+  } else { fit(); renderRooms(); renderWalls(); renderAll(); }   // first visit: blank plan
 })();
