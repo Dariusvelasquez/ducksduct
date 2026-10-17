@@ -18,6 +18,9 @@ label input,label select{margin-top:2px;color:var(--ink)}
 .row{display:flex;gap:8px;align-items:flex-end}.row>*{flex:1}
 small,.muted{color:var(--mut)}
 a{color:var(--acc)}
+.rm{border:1px solid var(--line);border-radius:6px;padding:6px;margin-bottom:6px}.rm.sel{border-color:var(--acc);background:#1c355655}
+.rrow{display:flex;gap:6px;align-items:flex-end}.rrow>*{flex:1;min-width:0}.rrow .ac{flex:0 0 auto;display:flex;align-items:center;gap:3px;margin:0}.rrow .ac input{width:auto;margin:0}.rrow .x{flex:0 0 auto}
+.rrow label{margin:4px 0 0}
 input[type=range]{padding:0}
 .status{color:var(--mut);font-size:12px;min-height:16px;margin:4px 0}
 details{margin:8px 0}summary{cursor:pointer;color:var(--mut)}
