@@ -23,3 +23,6 @@ Regrid token remains an optional fallback for other states.
 ## Tracing and cross-check
 - Upload a floor-plan image (listing floor plan screenshot, photo of a sketch), set the scale on a wall of known length, then trace rooms and walls with the Draw room / Draw wall tools. The image is held in memory only.
 - Cross-check: type the listing's sq ft / beds / baths (Zillow and Realtor.com links open the address; there is no public Zillow API and scraping it violates their terms) and compare against the county record and the drawn rooms. "Scale" resizes the drawing to a chosen source.
+
+## Example job
+"Example: 8455 Diagonal Rd" loads a real layout recreated from a hand sketch (After scenario). Scale assumed (~27 ft wide) from the OpenStreetMap building outline; Existing is a placeholder (same layout, 3 ton). Verify against the listing sq ft with Cross-check > Scale.

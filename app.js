@@ -61,9 +61,10 @@
     if (parent) parent.appendChild(n);
     return n;
   }
+  let FS = 1; // label scale: smaller buildings get smaller text so labels don't pile up
   function label(parent, x, y, t, o) {
     o = o || {};
-    const n = el('text', { x, y, 'font-size': o.size || 1.15, fill: o.fill || COL.line, 'text-anchor': o.anchor || 'middle', 'font-family': 'ui-monospace,Menlo,monospace', 'font-weight': o.bold ? 700 : 400, 'pointer-events': 'none' }, parent, t);
+    const n = el('text', { x, y, 'font-size': (o.size || 1.15) * FS, fill: o.fill || COL.line, 'text-anchor': o.anchor || 'middle', 'font-family': 'ui-monospace,Menlo,monospace', 'font-weight': o.bold ? 700 : 400, 'pointer-events': 'none' }, parent, t);
     n.style.paintOrder = 'stroke'; n.setAttribute('stroke', COL.bg); n.setAttribute('stroke-width', '0.35');
     return n;
   }
@@ -122,6 +123,7 @@
   function renderPlan(svg, key, interactive) {
     const s = state.scenarios[key];
     const a = H.analyze(s, state.rooms, state.cfg);
+    { const xs = state.rooms.flatMap((r) => [r.x, r.x + r.w]), ys = state.rooms.flatMap((r) => [r.y, r.y + r.h]); const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) : 50; FS = Math.max(0.6, Math.min(1, span / 50)); }
     const v = state.view || { x: 0, y: 0, w: 60, h: 40 };
     svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
@@ -361,11 +363,33 @@
   }
 
   function setFootprintAndRooms(fp, beds, baths) {
-    state.footprint = fp; state.walls = [];
+    state.footprint = fp; state.walls = []; state.generated = true;
     const w = Math.max(...fp.map((p) => p.x)), d = Math.max(...fp.map((p) => p.y));
     state.rooms = autoRooms(w, d, beds, baths);
     autoLayout('existing', { tons: state.curTons });
     autoLayout('proposed', { tons: Math.max(1.5, state.curTons - 1), splitters: true });
+    fit(); renderRooms(); renderWalls(); renderAll();
+  }
+
+  // Real job recreated from a hand sketch. Proposed = the sketched "After" layout; Existing = placeholder (same duct layout, 3 ton).
+  function loadExample(ex) {
+    const ids = {};
+    const id = (k, p) => ids[k] || (ids[k] = uid(p));
+    state.address = ex.address; state.parcel = ex.parcel; state.model = ''; state.curTons = 3; state.generated = false;
+    state.footprint = ex.footprint.map((p) => ({ ...p }));
+    state.rooms = ex.rooms.map((r) => ({ id: id(r.k, 'r'), name: r.name, x: r.x, y: r.y, w: r.w, h: r.h, ceiling: 8, noAC: !!r.noAC }));
+    state.walls = ex.walls.map((w) => ({ id: uid('w'), ...w }));
+    const build = (tons, keepSizes) => ({
+      equip: ex.equip.map((e) => { const { k, ...rest } = e; const o = { id: id(k, 'e'), ...rest }; if (o.type === 'ahu' || o.type === 'condenser') o.tons = tons; return o; }),
+      ducts: ex.ducts.map((d) => { const o = { id: uid('d'), kind: d.kind, a: id(d.a, 'e'), b: id(d.b, 'e') }; if (d.flex) o.flex = true; if (keepSizes && d.dia) o.dia = d.dia; return o; }),
+    });
+    state.scenarios.proposed = build(2, true);
+    state.scenarios.existing = build(3, false);
+    state.record = { county: 'Pinellas', parcelId: ex.parcel, source: 'Florida DOR statewide parcels', note: 'Parcel number matched exactly. Pinellas data has no living area: enter the listing sq ft under Cross-check and press Scale.' };
+    state.listing = {}; ['lsSqft', 'lsBeds', 'lsBaths'].forEach((i) => ($('#' + i).value = ''));
+    state.active = 'proposed'; state.sel = state.pending = null; state.underlay = null;
+    $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = ''; $('#curTons').value = '3';
+    setStatus('Example loaded. Scale assumed from the building outline (~27 ft wide). Confirm with the listing sq ft.');
     fit(); renderRooms(); renderWalls(); renderAll();
   }
 
@@ -447,7 +471,7 @@
     });
     window.addEventListener('pointerup', () => {
       if (drag && drag.kind === 'room' && state.draft && state.draft.w >= 3 && state.draft.h >= 3) {
-        const d = state.draft; state.rooms.push({ id: uid('r'), name: 'Room ' + (state.rooms.length + 1), x: d.x, y: d.y, w: d.w, h: d.h, ceiling: 8 }); renderRooms();
+        const d = state.draft; state.generated = false; state.rooms.push({ id: uid('r'), name: 'Room ' + (state.rooms.length + 1), x: d.x, y: d.y, w: d.w, h: d.h, ceiling: 8 }); renderRooms();
       } else if (drag && drag.kind === 'wall' && state.draft && Math.abs(state.draft.x2 - state.draft.x1) + Math.abs(state.draft.y2 - state.draft.y1) >= 2) {
         const d = state.draft; state.walls.push({ id: uid('w'), x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2, removed: false }); renderWalls();
       }
@@ -540,6 +564,7 @@
     $('#pClose').onclick = () => { $('#present').hidden = true; };
     $('#pPrint').onclick = () => window.print();
     $('#btnSample').onclick = loadSample;
+    $('#btnDiag').onclick = () => loadExample(window.EXAMPLES.diagonal);
     $('#btnTheme').onclick = () => { state.theme = state.theme === 'paper' ? 'blueprint' : 'paper'; applyTheme(); renderAll(); };
     $('#btnAddWall').onclick = () => { state.walls.push({ id: uid('w'), x1: 0, y1: 0, x2: 10, y2: 0, removed: false }); renderWalls(); renderAll(); };
     $('#wallTable').addEventListener('input', (e) => {
@@ -591,8 +616,8 @@
           if (state.record.beds) $('#beds').value = state.record.beds;
           if (state.record.baths) $('#baths').value = Math.max(1, Math.round(state.record.baths));
         }
-        if (r.footprint) { setFootprintAndRooms(r.footprint, num($('#beds').value, 3), num($('#baths').value, 2)); }
-        else renderAll();
+        if (r.footprint && (state.generated || !state.rooms.length)) { setFootprintAndRooms(r.footprint, num($('#beds').value, 3), num($('#baths').value, 2)); }
+        else { if (r.footprint) r.notes.push('Existing rooms kept (traced or example). Use Blank plan to regenerate from the outline.'); renderAll(); }
         setStatus((r.footprint ? 'Building outline loaded. ' : 'No outline, use the rectangle option. ') + r.notes.join(' '));
       } catch (e) { setStatus('Lookup failed: ' + e.message + '. You can still draw a rectangle footprint.'); }
       $('#btnLookup').disabled = false;
