@@ -22,6 +22,17 @@
 <div id="app">
   <aside id="left">
     <section>
+      <h2>Jobs</h2>
+      <label>Job name<input id="jobName" placeholder="e.g. Smith - 123 Main St"></label>
+      <div class="row"><button id="btnSaveJob" class="primary">Save</button><button id="btnSaveNew">Save as new</button></div>
+      <div id="jobState" class="status"></div>
+      <div id="jobList"></div>
+      <div class="row"><button id="btnExport">Export file</button><button id="btnImportBtn">Import file</button></div>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+      <small>Work autosaves in this browser. <b>Save</b> keeps a named copy you can reopen. <b>Save as new</b> makes a separate copy (use it for a revision). <b>Export</b> downloads a file you can back up or open on another computer.</small>
+    </section>
+
+    <section>
       <h2>Property</h2>
       <label>Address<input id="address" placeholder="123 Main St, Miami, FL 33130"></label>
       <div class="row">

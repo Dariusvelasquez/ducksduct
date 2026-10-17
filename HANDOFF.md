@@ -25,7 +25,12 @@ Change `storageKey` per brand so two installs on one domain never share saved jo
 | `config.js` | White-label settings |
 | `tools/` | build, preview server, export |
 
-Saved jobs live in the user's browser (`localStorage`). They are not shared between people or devices. Uploaded floor-plan images are kept in memory only.
+### Saving work
+- **Autosave:** the job being worked on is saved continuously in the browser (`localStorage`) and restored on reload. The floor-plan image is not part of autosave.
+- **Jobs list:** Save keeps a named job (including its floor-plan image when it fits), Save as new makes a separate copy for revisions, and jobs can be reopened, copied and deleted.
+- **Export / Import file:** downloads a `.ductjob.json` file containing the whole job and image. Use it as a backup or to move a job to another computer.
+- **Protection:** replacing the current work (example, blank plan, open, import) asks first if it has unsaved changes.
+- **Limits:** jobs are stored per browser and per computer, are never shared between people, and are lost if browser data is cleared. Browsers allow roughly 5 MB, so large images may not fit in the jobs list (Export always works). Changing `storageKey` in `config.js` hides jobs saved under the old key. For shared, cloud-saved jobs the app needs a backend with accounts (see section 7).
 
 ## 4. Outside data the app depends on
 | Source | Used for | Notes |

@@ -15,6 +15,10 @@ Run on the deployed URL, on a laptop and on a tablet. Tick each item; note the d
 - [ ] Existing vs Proposed tabs hold separate layouts; "Copy existing to proposed" works.
 - [ ] Customer presentation shows company contact line, both plans, the room table, and the disclaimer. Print / save PDF produces a clean page.
 - [ ] Reload the page: the job is still there. Clear browser data: the app still starts.
+- [ ] Save a job; Blank plan; Open it again: rooms, equipment, ducts and floor-plan image are back.
+- [ ] Edit after opening: the label shows "unsaved changes". Press Load example home: it asks before replacing. Cancel keeps the work.
+- [ ] Save as new makes a second job; Copy and Delete (with confirmation) work.
+- [ ] Export file, Blank plan, Import file: the job is restored. Importing a random .json file is rejected without changing the work.
 - [ ] `npm test` passes.
 
 Accepted by: ______________________  Date: ____________

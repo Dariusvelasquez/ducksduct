@@ -29,7 +29,7 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   // In-page replacement for confirm()/prompt(), which hosted pages cannot show.
@@ -52,6 +52,101 @@
     return false;
   }
   const scn = () => state.scenarios[state.active];
+
+  /* ---------- jobs library, export / import ---------- */
+  const JOBS_KEY = KEY + '.jobs';
+  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated'];
+  const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record'];
+  const sig = () => JSON.stringify(SIG.map((k) => state[k]));
+  const hasWork = () => state.rooms.length > 0 || ['existing', 'proposed'].some((k) => state.scenarios[k].equip.length > 0);
+  const isDirty = () => hasWork() && sig() !== state.savedSig;
+  const okToReplace = async () => !isDirty() || ask('Your current work has changes that are not saved as a job. Replace it anyway?');
+  const jobData = (withImage) => { const o = {}; CORE.forEach((k) => (o[k] = state[k])); o.underlay = withImage && state.underlay ? state.underlay : null; return JSON.parse(JSON.stringify(o)); };
+  const fin = (v) => typeof v === 'number' && isFinite(v);
+  function validJob(d) {
+    if (!d || typeof d !== 'object' || !Array.isArray(d.rooms) || !d.scenarios) return false;
+    if (!d.rooms.every((r) => r && fin(r.x) && fin(r.y) && fin(r.w) && fin(r.h))) return false;
+    return ['existing', 'proposed'].every((k) => { const s = d.scenarios[k]; return s && Array.isArray(s.equip) && Array.isArray(s.ducts) && s.equip.every((e) => e && fin(e.x) && fin(e.y) && typeof e.type === 'string') && s.ducts.every((x) => x && typeof x.kind === 'string'); });
+  }
+  function resetJob() {
+    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
+    ['jobName', 'lsSqft', 'lsBeds', 'lsBaths'].forEach((i) => { $('#' + i).value = ''; });
+  }
+  function applyJob(d) {
+    Object.assign(state, { address: '', parcel: '', model: '', footprint: [], rooms: [], walls: [], listing: {}, record: null, generated: false, curTons: 5, active: 'existing',
+      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft } });
+    CORE.forEach((k) => { if (d[k] !== undefined && d[k] !== null) state[k] = d[k]; });
+    state.underlay = d.underlay && typeof d.underlay.url === 'string' && /^data:image\//.test(d.underlay.url) ? d.underlay : null;
+    Object.assign(state, { sel: null, pending: null, selRoom: null, tool: 'select', draft: null, calib: [], view: null });
+    $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
+    $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
+    [['lsSqft', 'sqft'], ['lsBeds', 'beds'], ['lsBaths', 'baths']].forEach(([i, k]) => { $('#' + i).value = state.listing[k] != null ? state.listing[k] : ''; });
+    applyTheme(); fit(); renderRooms(); renderWalls(); renderAll();
+  }
+  const readJobs = () => { try { const j = JSON.parse(localStorage.getItem(JOBS_KEY)); return Array.isArray(j) ? j : []; } catch (e) { return []; } };
+  const writeJobs = (list) => { try { localStorage.setItem(JOBS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; } };
+  const setJobMsg = (t) => { $('#jobState').dataset.msg = t; renderJobs(); };
+  function putJob(asNew) {
+    if (!hasWork()) return setJobMsg('Nothing to save yet.');
+    const name = ($('#jobName').value.trim() || state.address || 'Untitled job').slice(0, 80);
+    const list = readJobs();
+    let job = !asNew && state.jobId && list.find((j) => j.id === state.jobId);
+    if (!job) { job = { id: uid('j') }; list.unshift(job); }
+    job.name = name; job.updated = Date.now(); job.data = jobData(true);
+    let ok = writeJobs(list), imageKept = !!job.data.underlay;
+    if (!ok && job.data.underlay) { job.data = jobData(false); imageKept = false; ok = writeJobs(list); }
+    if (!ok) return setJobMsg('Could not save: browser storage is full. Use Export file to keep a copy.');
+    state.jobId = job.id; state.jobName = name; state.savedSig = sig(); $('#jobName').value = name;
+    save();
+    setJobMsg(`Saved "${name}".` + (state.underlay && !imageKept ? ' The floor-plan image was too big to keep here. Export file includes it.' : ''));
+  }
+  async function openJob(id) {
+    const job = readJobs().find((j) => j.id === id); if (!job) return;
+    if (id !== state.jobId && !(await okToReplace())) return;
+    applyJob(job.data); state.jobId = job.id; state.jobName = job.name; state.savedSig = sig(); $('#jobName').value = job.name;
+    save(); setJobMsg(`Opened "${job.name}".`);
+  }
+  function copyJob(id) {
+    const list = readJobs(), job = list.find((j) => j.id === id); if (!job) return;
+    list.unshift({ id: uid('j'), name: (job.name + ' (copy)').slice(0, 80), updated: Date.now(), data: JSON.parse(JSON.stringify(job.data)) });
+    setJobMsg(writeJobs(list) ? `Copied "${job.name}".` : 'Could not copy: browser storage is full.');
+  }
+  async function deleteJob(id) {
+    const list = readJobs(), job = list.find((j) => j.id === id); if (!job) return;
+    if (!(await ask(`Delete the saved job "${job.name}"? This cannot be undone.`))) return;
+    writeJobs(list.filter((j) => j.id !== id));
+    if (state.jobId === id) { state.jobId = null; state.savedSig = null; save(); }
+    setJobMsg(`Deleted "${job.name}".`);
+  }
+  function exportJob() {
+    const name = $('#jobName').value.trim() || state.jobName || state.address || 'job';
+    const file = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.ductjob.json';
+    const blob = new Blob([JSON.stringify({ format: 'ductlayout-job', version: 1, name, saved: new Date().toISOString(), data: jobData(true) })], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    setJobMsg('Exported ' + file + '.');
+  }
+  async function importJob(file) {
+    if (!file) return;
+    if (file.size > 15e6) return setJobMsg('That file is too large to be a job file.');
+    let j;
+    try { j = JSON.parse(await file.text()); } catch (e) { return setJobMsg('That is not a valid job file.'); }
+    if (!j || j.format !== 'ductlayout-job' || !validJob(j.data)) return setJobMsg('That file is not a job file from this app, or it is damaged.');
+    if (!(await okToReplace())) return;
+    applyJob(j.data); state.jobId = null; state.savedSig = null; state.jobName = ''; $('#jobName').value = String(j.name || '').slice(0, 80);
+    save(); setJobMsg(`Imported "${j.name || 'job'}". Press Save to keep it in the jobs list.`);
+  }
+  // Cheap enough to run on every edit: uses the cached job name, never reads saved jobs from storage.
+  function renderJobState() {
+    const msg = $('#jobState').dataset.msg || '';
+    const st = state.jobId ? `Open: ${esc(state.jobName)}${isDirty() ? ' (unsaved changes)' : ''}` : hasWork() ? 'Not saved as a job yet.' : 'No job open.';
+    $('#jobState').innerHTML = msg ? `${st}<br>${esc(msg)}` : st;
+  }
+  function renderJobs() {
+    const list = readJobs().sort((a, b) => b.updated - a.updated);
+    renderJobState();
+    $('#jobList').innerHTML = list.map((j) => `<div class="job${j.id === state.jobId ? ' cur' : ''}" data-jid="${j.id}"><span class="jn">${esc(j.name)}<small>${new Date(j.updated).toLocaleString()}</small></span><button data-jact="open">Open</button><button data-jact="copy">Copy</button><button class="x" data-jact="del" title="Delete">×</button></div>`).join('');
+  }
 
   /* ---------- geometry helpers ---------- */
   function bbox() {
@@ -338,13 +433,13 @@
   function renderAll() {
     document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
-    renderResults(); renderProps(); renderXcheck();
+    renderResults(); renderProps(); renderXcheck(); renderJobs();
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
     document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
     $('#plan').style.cursor = state.tool === 'select' ? 'grab' : 'crosshair';
     save();
   }
-  function refreshLight() { renderPlan($('#plan'), state.active, true); renderResults(); save(); }
+  function refreshLight() { renderPlan($('#plan'), state.active, true); renderResults(); renderJobState(); save(); }
 
   /* ---------- building rooms and layouts ---------- */
   function autoRooms(w, d, beds, baths) {
@@ -620,10 +715,12 @@
     $('#imgOp').oninput = (e) => { if (state.underlay) { state.underlay.op = e.target.value / 100; refreshLight(); } };
     $('#btnRmImg').onclick = () => { state.underlay = null; renderAll(); };
     $('#btnClearRooms').onclick = async () => {
-      if (!(await ask('Start a blank plan? This removes all rooms, walls, the outline and all equipment in both scenarios.'))) return;
-      state.rooms = []; state.walls = []; state.footprint = []; state.record = null;
+      if (!(await okToReplace())) return;
+      state.rooms = []; state.walls = []; state.footprint = []; state.address = ''; state.parcel = ''; state.model = '';
+      ['address', 'parcel', 'model'].forEach((i) => { $('#' + i).value = ''; });
       ['existing', 'proposed'].forEach((k) => (state.scenarios[k] = { equip: [], ducts: [] }));
-      renderRooms(); renderWalls(); renderAll();
+      resetJob(); state.generated = false; $('#jobState').dataset.msg = '';
+      fit(); renderRooms(); renderWalls(); renderAll();
     };
     [['lsSqft', 'sqft'], ['lsBeds', 'beds'], ['lsBaths', 'baths']].forEach(([id, k]) => { $('#' + id).oninput = (e) => { state.listing[k] = e.target.value === '' ? null : parseFloat(e.target.value); renderXcheck(); save(); }; });
     $('#xcheck').addEventListener('click', (e) => { if (e.target.dataset.useq) scaleToSqft(parseFloat(e.target.dataset.useq)); });
@@ -635,7 +732,13 @@
     $('#btnCopy').onclick = () => { state.scenarios.proposed = JSON.parse(JSON.stringify(state.scenarios.existing)); state.active = 'proposed'; renderAll(); };
     $('#btnPresent').onclick = present;
     $('#pClose').onclick = () => { $('#present').hidden = true; };
-    $('#btnSample').onclick = loadSample;
+    $('#btnSample').onclick = async () => { if (!(await okToReplace())) return; resetJob(); $('#jobState').dataset.msg = ''; loadSample(); };
+    $('#btnSaveJob').onclick = () => putJob(false);
+    $('#btnSaveNew').onclick = () => putJob(true);
+    $('#btnExport').onclick = exportJob;
+    $('#btnImportBtn').onclick = () => $('#importFile').click();
+    $('#importFile').onchange = (e) => { importJob(e.target.files[0]); e.target.value = ''; };
+    $('#jobList').addEventListener('click', (e) => { const b = e.target.closest('[data-jact]'); if (!b) return; const id = b.closest('[data-jid]').dataset.jid; if (b.dataset.jact === 'open') openJob(id); else if (b.dataset.jact === 'copy') copyJob(id); else deleteJob(id); });
     $('#pPrint').onclick = () => window.print();
     $('#btnTheme').onclick = () => { state.theme = state.theme === 'paper' ? 'blueprint' : 'paper'; applyTheme(); renderAll(); };
     $('#btnAddWall').onclick = () => { state.walls.push({ id: uid('w'), x1: 0, y1: 0, x2: 10, y2: 0, removed: false }); renderWalls(); renderAll(); };
@@ -737,7 +840,7 @@
   applyBrand(); bindUI(); bindPlan();
   if (load()) {
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
-    $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
+    $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft; $('#jobName').value = state.jobName || '';
     ['sqft', 'beds', 'baths'].forEach((k) => { const el2 = $('#ls' + k[0].toUpperCase() + k.slice(1)); if (el2 && state.listing[k] != null) el2.value = state.listing[k]; });
     state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
     if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
