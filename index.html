@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DuctLayout - HVAC Blueprint Designer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Duct<span>Layout</span></h1>
+  <div class="seg" id="scnSeg">
+    <button data-scn="existing" class="on">Existing system</button>
+    <button data-scn="proposed">Proposed system</button>
+  </div>
+  <div class="grow"></div>
+  <button id="btnCopy" title="Copy the existing layout into the proposed scenario">Copy existing &rarr; proposed</button>
+  <button id="btnPresent" class="primary">Customer presentation</button>
+</header>
+
+<div id="app">
+  <aside id="left">
+    <section>
+      <h2>Property</h2>
+      <label>Address<input id="address" placeholder="123 Main St, Miami, FL 33130"></label>
+      <div class="row">
+        <button id="btnLookup" class="primary">Look up</button>
+        <button id="btnSample">Sample home</button>
+      </div>
+      <div id="status" class="status"></div>
+      <label>Parcel ID / Folio #<input id="parcel" placeholder="auto-filled with Regrid token, or type it"></label>
+      <details><summary>Parcel data token (Regrid)</summary>
+        <input id="token" type="password" placeholder="Regrid API token">
+        <small>Stored only in this browser. Without it, enter the folio # by hand.</small>
+      </details>
+      <details><summary>No outline found? Draw a rectangle</summary>
+        <div class="row"><label>Width ft<input id="rectW" type="number" value="54"></label><label>Depth ft<input id="rectD" type="number" value="36"></label></div>
+        <div class="row"><label>Beds<input id="beds" type="number" value="3"></label><label>Baths<input id="baths" type="number" value="2"></label></div>
+        <button id="btnRect">Build footprint &amp; rooms</button>
+      </details>
+    </section>
+
+    <section>
+      <h2>Current AC</h2>
+      <label>Model number<input id="model" placeholder="e.g. 4TTR4036 or GSX140361"></label>
+      <div class="row">
+        <label>Tons<select id="curTons"></select></label>
+        <label>BTU/sqft<input id="btuSqft" type="number" step="1" value="30"></label>
+      </div>
+      <div id="modelNote" class="status"></div>
+      <button id="btnApplyCur">Apply to existing system</button>
+    </section>
+
+    <section>
+      <h2>Rooms <small>(ft)</small></h2>
+      <div id="roomTable"></div>
+      <button id="btnAddRoom">+ Room</button>
+    </section>
+  </aside>
+
+  <main>
+    <div id="toolbar">
+      <div class="seg" id="toolSeg">
+        <button data-tool="select" class="on">Select / move</button>
+        <button data-tool="supply">Supply duct</button>
+        <button data-tool="return">Return duct</button>
+        <button data-tool="refrig">Refrigerant line</button>
+      </div>
+      <span class="sep"></span>
+      <button data-add="condenser">+ Condenser</button>
+      <button data-add="ahu">+ Air handler</button>
+      <button data-add="supply">+ Outlet</button>
+      <button data-add="return">+ Intake</button>
+      <button data-add="splitter">+ Splitter</button>
+      <button data-add="head">+ Mini-split</button>
+      <span class="sep"></span>
+      <button id="btnAuto">Auto layout</button>
+      <button id="btnFit">Fit</button>
+    </div>
+    <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="hint">Drag equipment to move it. Pick a duct tool, then click two items to connect them. Del removes the selected item.</div>
+  </main>
+
+  <aside id="right">
+    <section id="props"><h2>Selected</h2><div id="propBody" class="muted">Nothing selected</div></section>
+    <section id="results"></section>
+  </aside>
+</div>
+
+<div id="present" hidden>
+  <div class="pbar">
+    <div><h1 id="pTitle"></h1><div id="pSub"></div></div>
+    <div class="grow"></div>
+    <button id="pPrint">Print / save PDF</button>
+    <button id="pClose" class="primary">Close</button>
+  </div>
+  <div class="pcols">
+    <div><h3>Existing system</h3><svg id="planA"></svg><div id="statA" class="stats"></div></div>
+    <div><h3>Proposed system</h3><svg id="planB"></svg><div id="statB" class="stats"></div></div>
+  </div>
+  <div id="pTable"></div>
+  <p class="disclaimer">Preliminary sizing estimate from room area and a rule-of-thumb BTU/sqft factor, not an ACCA Manual J load calculation. Confirm with a full load calculation before final equipment selection.</p>
+</div>
+
+<script src="hvac.js"></script>
+<script src="lookup.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

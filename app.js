@@ -1,0 +1,443 @@
+(function () {
+  const H = window.HVAC, L = window.Lookup;
+  const $ = (s) => document.querySelector(s);
+  const NS = 'http://www.w3.org/2000/svg';
+  const KEY = 'ductlayout.v1';
+  const COL = { supply: '#ff8a5c', return: '#5ce1ff', refrig: '#ffd75c', line: '#cfe3ff' };
+  const SIZE = { condenser: [3.6, 3.6], ahu: [2.4, 3.4], supply: [1.8, 1.8], return: [2.6, 1.8], splitter: [1.4, 1.4], head: [3.4, 1.1] };
+  const NAME = { condenser: 'Condenser', ahu: 'Air handler', supply: 'Outlet', return: 'Intake', splitter: 'Splitter', head: 'Mini-split' };
+
+  let uidn = 0;
+  const uid = (p) => p + Date.now().toString(36) + (++uidn);
+  const num = (v, d) => (isFinite(parseFloat(v)) ? parseFloat(v) : d);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  const state = {
+    address: '', parcel: '', model: '', footprint: [], rooms: [],
+    scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
+    active: 'existing', cfg: { btuPerSqft: 30 }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+  };
+
+  /* ---------- persistence ---------- */
+  function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...state, pending: null, sel: null })); } catch (e) {} }
+  function load() {
+    try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.rooms) { Object.assign(state, s, { pending: null, sel: null, tool: 'select' }); return true; } } catch (e) {}
+    return false;
+  }
+  const scn = () => state.scenarios[state.active];
+
+  /* ---------- geometry helpers ---------- */
+  function bbox() {
+    const xs = [], ys = [];
+    state.footprint.forEach((p) => { xs.push(p.x); ys.push(p.y); });
+    state.rooms.forEach((r) => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
+    ['existing', 'proposed'].forEach((k) => state.scenarios[k].equip.forEach((e) => { xs.push(e.x); ys.push(e.y); }));
+    if (!xs.length) return { x: 0, y: 0, w: 60, h: 40 };
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+  function fit() {
+    const b = bbox(), pad = 9;
+    state.view = { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
+  }
+  function port(e, which) {
+    const [w] = SIZE[e.type];
+    if (e.type === 'ahu') return which === 'return' ? { x: e.x - w / 2, y: e.y } : { x: e.x + w / 2, y: e.y };
+    return { x: e.x, y: e.y };
+  }
+
+  /* ---------- SVG drawing ---------- */
+  function el(tag, attrs, parent, text) {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs || {}) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+  function label(parent, x, y, t, o) {
+    o = o || {};
+    const n = el('text', { x, y, 'font-size': o.size || 1.15, fill: o.fill || COL.line, 'text-anchor': o.anchor || 'middle', 'font-family': 'ui-monospace,Menlo,monospace', 'font-weight': o.bold ? 700 : 400, 'pointer-events': 'none' }, parent, t);
+    n.style.paintOrder = 'stroke'; n.setAttribute('stroke', '#0b3a6b'); n.setAttribute('stroke-width', '0.35');
+    return n;
+  }
+
+  function drawEquip(g, e, a, interactive) {
+    const [w, h] = SIZE[e.type];
+    const info = a.eq[e.id] || {};
+    const grp = el('g', { transform: `translate(${e.x} ${e.y})`, 'data-id': e.id, style: interactive ? 'cursor:move' : '' }, g);
+    const sel = interactive && (state.sel === e.id || state.pending === e.id);
+    const stroke = sel ? '#fff' : COL.line;
+    const sw = sel ? 0.35 : 0.2;
+    const box = (fill) => el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, fill: fill || '#0b3a6b', stroke, 'stroke-width': sw }, grp);
+    const fmt = (v) => Math.round(v);
+    if (e.type === 'condenser') {
+      box(); el('circle', { r: w * 0.38, fill: 'none', stroke, 'stroke-width': 0.15 }, grp);
+      for (let i = 0; i < 4; i++) el('path', { d: `M0 0 L${Math.cos(i * 1.571) * w * 0.38} ${Math.sin(i * 1.571) * w * 0.38}`, stroke, 'stroke-width': 0.15 }, grp);
+      label(grp, 0, h / 2 + 1.4, `${e.label || 'CONDENSER'} ${e.tons}T`, { bold: true });
+      label(grp, 0, -h / 2 - 0.7, 'OUTLET (fan discharge)', { size: 0.9, fill: COL.supply });
+      label(grp, -w / 2 - 0.3, 0.3, 'INTAKE', { size: 0.9, anchor: 'end', fill: COL.return });
+    } else if (e.type === 'ahu') {
+      box(); el('rect', { x: -w / 2 + 0.4, y: -h / 2 + 0.4, width: w - 0.8, height: h - 0.8, fill: 'none', stroke, 'stroke-width': 0.1, 'stroke-dasharray': '0.4 0.3' }, grp);
+      label(grp, 0, 0.35, 'AHU', { bold: true });
+      label(grp, 0, h / 2 + 1.2, `${e.label || 'AIR HANDLER'} ${info.tons || e.tons}T`, { size: 0.9, bold: true });
+      label(grp, -w / 2 - 0.4, -0.5, 'INTAKE', { size: 0.95, anchor: 'end', fill: COL.return, bold: true });
+      label(grp, w / 2 + 0.4, -0.5, 'OUTLET', { size: 0.95, anchor: 'start', fill: COL.supply, bold: true });
+    } else if (e.type === 'supply') {
+      box(); el('path', { d: `M${-w / 2} ${-h / 2}L${w / 2} ${h / 2}M${w / 2} ${-h / 2}L${-w / 2} ${h / 2}`, stroke: COL.supply, 'stroke-width': 0.15 }, grp);
+      label(grp, 0, -h / 2 - 0.5, `OUTLET ${fmt(info.cfm || 0)} CFM`, { size: 0.9, fill: COL.supply });
+    } else if (e.type === 'return') {
+      box(); for (let i = 1; i < 4; i++) el('path', { d: `M${-w / 2 + (w / 4) * i} ${-h / 2}V${h / 2}`, stroke: COL.return, 'stroke-width': 0.12 }, grp);
+      label(grp, 0, -h / 2 - 0.5, `INTAKE ${fmt(info.cfm || 0)} CFM`, { size: 0.9, fill: COL.return });
+    } else if (e.type === 'splitter') {
+      el('path', { d: `M0 ${-h / 2}L${w / 2} 0L0 ${h / 2}L${-w / 2} 0Z`, fill: '#0b3a6b', stroke, 'stroke-width': sw }, grp);
+      label(grp, 0, -h / 2 - 0.4, 'SPLIT', { size: 0.8 });
+    } else if (e.type === 'head') {
+      box(); for (let i = 0; i < 3; i++) el('path', { d: `M${-w / 2 + 0.3} ${-0.2 + i * 0.25}H${w / 2 - 0.3}`, stroke: COL.supply, 'stroke-width': 0.1 }, grp);
+      label(grp, 0, -h / 2 - 0.5, `${e.label || 'MINI-SPLIT'} · OUTLET ${Math.round((e.btu || 0) / 1000)}k BTU`, { size: 0.9, fill: COL.supply });
+    }
+    return grp;
+  }
+
+  function ductPath(a, b, kind) {
+    return `M${a.x} ${a.y}V${b.y}H${b.x}`;
+  }
+
+  function renderPlan(svg, key, interactive) {
+    const s = state.scenarios[key];
+    const a = H.analyze(s, state.rooms, state.cfg);
+    const v = state.view || { x: 0, y: 0, w: 60, h: 40 };
+    svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.innerHTML = '';
+    const defs = el('defs', {}, svg);
+    const pat = el('pattern', { id: 'g' + svg.id, width: 5, height: 5, patternUnits: 'userSpaceOnUse' }, defs);
+    el('path', { d: 'M5 0H0V5', fill: 'none', stroke: '#ffffff', 'stroke-opacity': 0.09, 'stroke-width': 0.08 }, pat);
+    el('rect', { x: v.x - 500, y: v.y - 500, width: v.w + 1000, height: v.h + 1000, fill: `url(#g${svg.id})`, 'data-bg': 1 }, svg);
+
+    if (state.footprint.length) el('path', { d: 'M' + state.footprint.map((p) => `${p.x} ${p.y}`).join('L') + 'Z', fill: '#ffffff08', stroke: COL.line, 'stroke-width': 0.5, 'pointer-events': 'none' }, svg);
+    state.rooms.forEach((r) => {
+      const row = a.rooms.find((x) => x.id === r.id);
+      const cls = row ? (row.pct < 0.85 ? '#ff6b6b' : row.pct > 1.25 ? '#f5b942' : '#3ecf8e') : COL.line;
+      el('rect', { x: r.x, y: r.y, width: r.w, height: r.h, fill: 'none', stroke: COL.line, 'stroke-opacity': 0.55, 'stroke-width': 0.15, 'stroke-dasharray': '0.6 0.4', 'pointer-events': 'none' }, svg);
+      label(svg, r.x + r.w / 2, r.y + 1.7, r.name.toUpperCase(), { size: 1.05, bold: true });
+      label(svg, r.x + r.w / 2, r.y + 3, `${Math.round(H.roomSqft(r))} sf · need ${(row ? row.required / 1000 : 0).toFixed(1)}k`, { size: 0.85 });
+      if (row) label(svg, r.x + r.w / 2, r.y + 4.2, `${Math.round(row.pct * 100)}% served`, { size: 0.85, fill: cls });
+    });
+
+    const byId = Object.fromEntries(s.equip.map((e) => [e.id, e]));
+    s.ducts.forEach((d) => {
+      const A = byId[d.a], B = byId[d.b];
+      if (!A || !B) return;
+      const pa = port(A, d.kind), pb = port(B, d.kind);
+      const cfm = a.ductFlow[d.id] || 0;
+      const dia = H.ductDia(cfm);
+      const toOutlet = B.type === 'supply' || B.type === 'return' || A.type === 'supply' || A.type === 'return';
+      const dpath = d.kind === 'refrig' ? `M${pa.x} ${pa.y}L${pb.x} ${pb.y}` : toOutlet ? ductPath(pa, pb, d.kind) : `M${pa.x} ${pa.y}H${pb.x}V${pb.y}`;
+      const wFt = d.kind === 'refrig' ? 0.2 : Math.max(0.5, dia / 12);
+      if (d.kind !== 'refrig') el('path', { d: dpath, fill: 'none', stroke: COL[d.kind], 'stroke-opacity': 0.22, 'stroke-width': wFt, 'stroke-linejoin': 'round' }, svg);
+      el('path', { d: dpath, fill: 'none', stroke: COL[d.kind], 'stroke-width': d.kind === 'refrig' ? 0.25 : 0.2, 'stroke-dasharray': d.kind === 'refrig' ? '1 0.6' : '', 'stroke-linejoin': 'round', 'pointer-events': 'none' }, svg);
+      if (interactive) el('path', { d: dpath, fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(1.2, wFt), 'data-duct': d.id, style: 'cursor:pointer' }, svg);
+      if (d.kind !== 'refrig' && cfm > 0) label(svg, toOutlet ? pa.x + 0.4 : (pa.x + pb.x) / 2, toOutlet ? (pa.y + pb.y) / 2 : pa.y - 0.6, `${dia}"ø ${Math.round(cfm)}`, { anchor: toOutlet ? 'start' : 'middle', size: 0.75, fill: COL[d.kind] });
+      if (interactive && state.sel === d.id) el('path', { d: dpath, fill: 'none', stroke: '#fff', 'stroke-width': 0.3, 'stroke-dasharray': '0.4 0.4', 'pointer-events': 'none' }, svg);
+    });
+    s.equip.forEach((e) => drawEquip(svg, e, a, interactive));
+    return a;
+  }
+
+  /* ---------- results / properties ---------- */
+  const pctCls = (p) => (p < 0.85 ? 'bad' : p > 1.25 ? 'warn' : 'ok');
+  function tonsLabel(t) { return (Math.round(t * 10) / 10).toString(); }
+  function recommend(a) { return Math.ceil(a.total.requiredTons * 2) / 2; }
+
+  function statCards(a) {
+    const t = a.total;
+    const overCls = t.oversize > 1.25 ? 'warn' : t.oversize < 0.9 ? 'bad' : 'ok';
+    return `<div class="card"><b>${tonsLabel(t.installedTons)} T</b><span>Installed (${Math.round(t.installedBtu / 1000)}k BTU)</span></div>
+      <div class="card"><b>${tonsLabel(t.requiredTons)} T</b><span>Calculated need</span></div>
+      <div class="card"><b>${Math.round(t.sqftPerTon)}</b><span>sq ft per ton</span></div>
+      <div class="card"><b class="${overCls}">${Math.round(t.oversize * 100)}%</b><span>Installed vs. need</span></div>`;
+  }
+
+  function renderResults() {
+    const a = H.analyze(scn(), state.rooms, state.cfg);
+    const rows = a.rooms.map((r) => `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.cfm)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${r.transfer ? 'transfer' : Math.round(r.pct * 100) + '%'}</td></tr>`).join('');
+    const t = a.total;
+    $('#results').innerHTML = `<h2>${state.active === 'existing' ? 'Existing' : 'Proposed'} system</h2>
+      <div class="cards">${statCards(a)}</div>
+      <table><tr><th>Room</th><th>sf</th><th>Need BTU</th><th>CFM</th><th>Out BTU</th><th>Match</th></tr>${rows}
+      <tr><td><b>Total</b></td><td>${Math.round(t.sqft)}</td><td>${Math.round(t.requiredBtu)}</td><td>${Math.round(t.systemCfm)}</td><td>${Math.round(t.deliveredBtu)}</td><td></td></tr></table>
+      <p class="muted">Recommended capacity for this footprint: <b>${recommend(a)} ton</b> (rule-of-thumb ${state.cfg.btuPerSqft} BTU/sqft). Match = delivered / needed: under 85% is starved, over 125% is oversupplied.</p>
+      ${a.warnings.length ? '<ul class="warns">' + a.warnings.map((w) => `<li>${esc(w)}</li>`).join('') + '</ul>' : ''}`;
+  }
+
+  function renderProps() {
+    const body = $('#propBody');
+    const s = scn();
+    const e = s.equip.find((x) => x.id === state.sel);
+    const d = s.ducts.find((x) => x.id === state.sel);
+    if (d) { body.className = ''; body.innerHTML = `<p>${d.kind} line</p><button class="x" data-del>Delete</button>`; return; }
+    if (!e) { body.className = 'muted'; body.textContent = 'Nothing selected'; return; }
+    body.className = '';
+    const a = H.analyze(s, state.rooms, state.cfg).eq[e.id] || {};
+    const f = (k, lbl, step) => `<label>${lbl}<input data-k="${k}" type="number" step="${step || 0.5}" value="${e[k] == null ? '' : e[k]}"></label>`;
+    let h = `<b>${NAME[e.type]}</b><label>Label<input data-k="label" data-t="text" value="${esc(e.label || '')}"></label>`;
+    if (e.type === 'condenser' || e.type === 'ahu') h += f('tons', 'Capacity (tons)', 0.5);
+    if (e.type === 'ahu') h += f('cfm', 'Airflow override (CFM, blank = 400/ton)', 25) + `<p class="muted">Airflow now: ${Math.round(a.cfm || 0)} CFM</p>`;
+    if (e.type === 'head') h += f('btu', 'Capacity (BTU/h)', 1000);
+    if (e.type === 'supply') h += f('weight', 'Damper balance weight (higher = more air)', 0.5);
+    if (e.type === 'supply' || e.type === 'return') h += `<p class="muted">Airflow: ${Math.round(a.cfm || 0)} CFM · ${H.ductDia(a.cfm || 0)}" round duct</p>`;
+    h += `<div class="row"><label>X ft<input data-k="x" type="number" step="0.5" value="${e.x}"></label><label>Y ft<input data-k="y" type="number" step="0.5" value="${e.y}"></label></div><button class="x" data-del>Delete item</button>`;
+    body.innerHTML = h;
+  }
+
+  function renderRooms() {
+    $('#roomTable').innerHTML = '<table><tr><th>Name</th><th>X</th><th>Y</th><th>W</th><th>D</th><th></th></tr>' + state.rooms.map((r) => `<tr data-room="${r.id}"><td><input class="nm" data-rk="name" value="${esc(r.name)}"></td>${['x', 'y', 'w', 'h'].map((k) => `<td><input data-rk="${k}" type="number" step="0.5" value="${r[k]}" style="width:44px"></td>`).join('')}<td><button class="x" data-rdel>×</button></td></tr>`).join('') + '</table>';
+  }
+
+  function renderAll() {
+    renderPlan($('#plan'), state.active, true);
+    renderResults(); renderProps();
+    document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
+    document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
+    $('#plan').style.cursor = state.tool === 'select' ? 'grab' : 'crosshair';
+    save();
+  }
+  function refreshLight() { renderPlan($('#plan'), state.active, true); renderResults(); save(); }
+
+  /* ---------- building rooms and layouts ---------- */
+  function autoRooms(w, d, beds, baths) {
+    const hallH = Math.min(6, d * 0.16), topH = (d - hallH) * 0.45, botH = d - hallH - topH;
+    const rooms = [];
+    const top = [];
+    for (let i = 0; i < beds; i++) top.push({ name: i === 0 ? 'Master Bed' : `Bed ${i + 1}`, wt: i === 0 ? 1.3 : 1 });
+    for (let i = 0; i < baths; i++) top.push({ name: baths > 1 ? `Bath ${i + 1}` : 'Bath', wt: 0.55 });
+    const bot = [{ name: 'Living', wt: 1.4 }, { name: 'Kitchen', wt: 1 }, { name: 'Dining', wt: 0.9 }];
+    const strip = (items, y, hh) => {
+      const tw = items.reduce((s, i) => s + i.wt, 0); let x = 0;
+      items.forEach((i) => { const ww = (w * i.wt) / tw; rooms.push({ id: uid('r'), name: i.name, x: +x.toFixed(1), y: +y.toFixed(1), w: +ww.toFixed(1), h: +hh.toFixed(1), ceiling: 8 }); x += ww; });
+    };
+    strip(top, 0, topH);
+    rooms.push({ id: uid('r'), name: 'Hall', x: 0, y: +topH.toFixed(1), w, h: +hallH.toFixed(1), ceiling: 8 });
+    strip(bot, topH + hallH, botH);
+    return rooms;
+  }
+
+  function autoLayout(key, opts) {
+    opts = opts || {};
+    const s = state.scenarios[key];
+    const b = bbox();
+    const rooms = state.rooms;
+    const hall = rooms.find((r) => /hall/i.test(r.name)) || rooms[0];
+    const ahuAt = hall ? { x: hall.x + 4, y: hall.y + hall.h / 2 } : { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    const fpMaxX = state.footprint.length ? Math.max(...state.footprint.map((p) => p.x)) : b.x + b.w;
+    const mk = (type, x, y, extra) => Object.assign({ id: uid('e'), type, x: +x.toFixed(1), y: +y.toFixed(1) }, extra);
+    const tons = opts.tons || state.curTons;
+    const ahu = mk('ahu', ahuAt.x, ahuAt.y, { tons, label: 'AIR HANDLER' });
+    const cond = mk('condenser', fpMaxX + 5, ahuAt.y, { tons, label: 'CONDENSER' });
+    s.equip = [ahu, cond]; s.ducts = [{ id: uid('d'), kind: 'refrig', a: cond.id, b: ahu.id }];
+    const regs = [];
+    rooms.forEach((r) => {
+      if (r === hall) return;
+      const n = r.w * r.h > 300 ? 2 : 1;
+      const wt = Math.max(0.5, Math.round((H.roomLoadBtu(r, state.cfg) / n / 1000) * 10) / 10);
+      for (let i = 0; i < n; i++) regs.push(mk('supply', r.x + (r.w * (i + 1)) / (n + 1), r.y + r.h / 2 + 2.5, { room: r.id, weight: wt }));
+    });
+    s.equip.push(...regs);
+    const ret = mk('return', hall.x + hall.w * 0.9, hall.y + hall.h / 2);
+    s.equip.push(ret);
+    s.ducts.push({ id: uid('d'), kind: 'return', a: ret.id, b: ahu.id });
+    if (opts.splitters) {
+      regs.sort((p, q) => p.x - q.x);
+      for (let i = 0; i < regs.length; i += 3) {
+        const chunk = regs.slice(i, i + 3);
+        const cx = chunk.reduce((t, r) => t + r.x, 0) / chunk.length, cy = chunk.reduce((t, r) => t + r.y, 0) / chunk.length;
+        const sp = mk('splitter', cx, ahuAt.y);
+        s.equip.push(sp);
+        s.ducts.push({ id: uid('d'), kind: 'supply', a: ahu.id, b: sp.id });
+        chunk.forEach((r) => s.ducts.push({ id: uid('d'), kind: 'supply', a: sp.id, b: r.id }));
+      }
+    } else regs.forEach((r) => s.ducts.push({ id: uid('d'), kind: 'supply', a: ahu.id, b: r.id }));
+  }
+
+  function setFootprintAndRooms(fp, beds, baths) {
+    state.footprint = fp;
+    const w = Math.max(...fp.map((p) => p.x)), d = Math.max(...fp.map((p) => p.y));
+    state.rooms = autoRooms(w, d, beds, baths);
+    autoLayout('existing', { tons: state.curTons });
+    autoLayout('proposed', { tons: Math.max(1.5, state.curTons - 1), splitters: true });
+    fit(); renderRooms(); renderAll();
+  }
+
+  function loadSample() {
+    state.address = '123 Sample St'; state.parcel = '30-4102-001-0010'; state.model = '4TTR4060'; state.curTons = 5;
+    $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
+    $('#curTons').value = '5';
+    setFootprintAndRooms(L.rectFootprint(54, 36), 3, 2);
+  }
+
+  /* ---------- editing ---------- */
+  function svgPoint(svg, ev) {
+    const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY;
+    return p.matrixTransform(svg.getScreenCTM().inverse());
+  }
+  const snap = (v) => Math.round(v * 2) / 2;
+
+  function addEquip(type) {
+    const v = state.view || { x: 0, y: 0, w: 60, h: 40 };
+    const e = { id: uid('e'), type, x: snap(v.x + v.w / 2), y: snap(v.y + v.h / 2), label: '' };
+    if (type === 'condenser' || type === 'ahu') e.tons = state.curTons;
+    if (type === 'head') e.btu = 12000;
+    scn().equip.push(e); state.sel = e.id; renderAll();
+  }
+
+  function linkClick(id) {
+    const s = scn();
+    if (!state.pending) { state.pending = id; renderAll(); return; }
+    const a = state.pending; state.pending = null;
+    const A = s.equip.find((e) => e.id === a), B = s.equip.find((e) => e.id === id);
+    let ok = A && B && a !== id;
+    if (ok && state.tool === 'refrig') ok = (A.type === 'condenser' && (B.type === 'ahu' || B.type === 'head')) || (B.type === 'condenser' && (A.type === 'ahu' || A.type === 'head'));
+    if (ok && state.tool === 'supply') ok = A.type !== 'return' && B.type !== 'return' && A.type !== 'condenser' && B.type !== 'condenser';
+    if (ok && state.tool === 'return') ok = A.type !== 'supply' && B.type !== 'supply' && A.type !== 'condenser' && B.type !== 'condenser';
+    if (ok && s.ducts.some((d) => d.kind === state.tool && ((d.a === a && d.b === id) || (d.a === id && d.b === a)))) ok = false;
+    if (ok) s.ducts.push({ id: uid('d'), kind: state.tool, a, b: id });
+    else $('#hint').textContent = 'That connection is not valid (outlets only take supply ducts, intakes only return ducts, refrigerant joins condenser to air handler or mini-split).';
+    renderAll();
+  }
+
+  function removeSel() {
+    const s = scn();
+    if (!state.sel) return;
+    s.equip = s.equip.filter((e) => e.id !== state.sel);
+    s.ducts = s.ducts.filter((d) => d.id !== state.sel && s.equip.some((e) => e.id === d.a) && s.equip.some((e) => e.id === d.b));
+    state.sel = null; renderAll();
+  }
+
+  function bindPlan() {
+    const svg = $('#plan');
+    let drag = null;
+    svg.addEventListener('pointerdown', (ev) => {
+      const g = ev.target.closest('[data-id]'), du = ev.target.closest('[data-duct]');
+      const p = svgPoint(svg, ev);
+      if (g) {
+        const id = g.dataset.id;
+        if (state.tool !== 'select') { linkClick(id); return; }
+        const e = scn().equip.find((x) => x.id === id);
+        state.sel = id; drag = { kind: 'eq', e, dx: p.x - e.x, dy: p.y - e.y }; renderAll();
+      } else if (du && state.tool === 'select') { state.sel = du.dataset.duct; renderAll(); }
+      else { state.sel = null; state.pending = null; drag = { kind: 'pan', sx: ev.clientX, sy: ev.clientY, v: { ...state.view } }; renderProps(); }
+      ev.preventDefault();
+    });
+    window.addEventListener('pointermove', (ev) => {
+      if (!drag) return;
+      if (drag.kind === 'eq') { const p = svgPoint(svg, ev); drag.e.x = snap(p.x - drag.dx); drag.e.y = snap(p.y - drag.dy); refreshLight(); }
+      else {
+        const r = svg.getBoundingClientRect(), k = Math.max(drag.v.w / r.width, drag.v.h / r.height);
+        state.view = { ...drag.v, x: drag.v.x - (ev.clientX - drag.sx) * k, y: drag.v.y - (ev.clientY - drag.sy) * k };
+        svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
+      }
+    });
+    window.addEventListener('pointerup', () => { if (drag && drag.kind === 'eq') renderAll(); drag = null; });
+    svg.addEventListener('wheel', (ev) => {
+      ev.preventDefault();
+      const p = svgPoint(svg, ev), f = ev.deltaY > 0 ? 1.12 : 1 / 1.12, v = state.view;
+      state.view = { x: p.x - (p.x - v.x) * f, y: p.y - (p.y - v.y) * f, w: v.w * f, h: v.h * f };
+      svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
+    }, { passive: false });
+    window.addEventListener('keydown', (ev) => {
+      if ((ev.key === 'Delete' || ev.key === 'Backspace') && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) removeSel();
+    });
+  }
+
+  /* ---------- presentation ---------- */
+  function present() {
+    const A = H.analyze(state.scenarios.existing, state.rooms, state.cfg), B = H.analyze(state.scenarios.proposed, state.rooms, state.cfg);
+    $('#pTitle').textContent = state.address || 'HVAC proposal';
+    $('#pSub').textContent = [state.parcel && 'Parcel / Folio ' + state.parcel, state.model && 'Current unit ' + state.model, new Date().toLocaleDateString()].filter(Boolean).join(' · ');
+    $('#present').hidden = false;
+    renderPlan($('#planA'), 'existing', false); renderPlan($('#planB'), 'proposed', false);
+    $('#statA').innerHTML = statCards(A); $('#statB').innerHTML = statCards(B);
+    const rows = A.rooms.map((r, i) => { const q = B.rooms[i]; return `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${Math.round(r.pct * 100)}%</td><td>${Math.round(q.delivered)}</td><td class="${pctCls(q.pct)}">${Math.round(q.pct * 100)}%</td></tr>`; }).join('');
+    $('#pTable').innerHTML = `<table><tr><th>Room</th><th>sq ft</th><th>Needed BTU</th><th>Existing BTU</th><th>Existing match</th><th>Proposed BTU</th><th>Proposed match</th></tr>${rows}</table>
+      <p>Condenser size change: <b>${tonsLabel(A.total.installedTons)} ton &rarr; ${tonsLabel(B.total.installedTons)} ton</b> (${Math.round(A.total.sqftPerTon)} &rarr; ${Math.round(B.total.sqftPerTon)} sq ft per ton).</p>`;
+  }
+
+  /* ---------- wiring ---------- */
+  function setStatus(t) { $('#status').textContent = t; }
+
+  function bindUI() {
+    $('#scnSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { state.active = b.dataset.scn; state.sel = state.pending = null; renderAll(); } });
+    $('#toolSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { state.tool = b.dataset.tool; state.pending = null; $('#hint').textContent = state.tool === 'select' ? 'Drag equipment to move it.' : 'Click the first item, then the second item to connect them.'; renderAll(); } });
+    document.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => addEquip(b.dataset.add)));
+    $('#btnFit').onclick = () => { fit(); renderAll(); };
+    $('#btnAuto').onclick = () => { if (confirm('Replace the ' + state.active + ' layout with an automatic one?')) { autoLayout(state.active, { splitters: state.active === 'proposed' }); renderAll(); } };
+    $('#btnCopy').onclick = () => { state.scenarios.proposed = JSON.parse(JSON.stringify(state.scenarios.existing)); state.active = 'proposed'; renderAll(); };
+    $('#btnPresent').onclick = present;
+    $('#pClose').onclick = () => { $('#present').hidden = true; };
+    $('#pPrint').onclick = () => window.print();
+    $('#btnSample').onclick = loadSample;
+    $('#btnAddRoom').onclick = () => { state.rooms.push({ id: uid('r'), name: 'Room', x: 0, y: 0, w: 12, h: 12, ceiling: 8 }); renderRooms(); renderAll(); };
+    $('#btnRect').onclick = () => setFootprintAndRooms(L.rectFootprint(num($('#rectW').value, 54), num($('#rectD').value, 36)), Math.max(1, num($('#beds').value, 3)), Math.max(1, num($('#baths').value, 2)));
+
+    $('#parcel').oninput = (e) => { state.parcel = e.target.value; save(); };
+    $('#address').oninput = (e) => { state.address = e.target.value; save(); };
+    $('#btuSqft').oninput = (e) => { state.cfg.btuPerSqft = num(e.target.value, 30); refreshLight(); };
+    try { $('#token').value = localStorage.getItem('ductlayout.token') || ''; } catch (e) {}
+    $('#token').onchange = (e) => { try { localStorage.setItem('ductlayout.token', e.target.value); } catch (x) {} };
+
+    const tons = $('#curTons');
+    for (let t = 1; t <= 6; t += 0.5) tons.add(new Option(t + ' ton', t));
+    $('#model').oninput = (e) => {
+      state.model = e.target.value;
+      const r = H.parseModel(state.model);
+      if (r.tons) { tons.value = r.tons; $('#modelNote').textContent = `Detected ${r.tons} ton (${r.btu / 1000}k BTU) from the model number. Verify on the nameplate.`; }
+      else $('#modelNote').textContent = state.model ? 'Could not read capacity from this model number. Choose tons manually.' : '';
+      save();
+    };
+    $('#btnApplyCur').onclick = () => {
+      state.curTons = num(tons.value, 3);
+      scn().equip.concat(state.scenarios.existing.equip).forEach((e) => {});
+      state.scenarios.existing.equip.filter((e) => e.type === 'condenser' || e.type === 'ahu').forEach((e) => (e.tons = state.curTons));
+      renderAll();
+    };
+
+    $('#btnLookup').onclick = async () => {
+      const addr = $('#address').value.trim();
+      if (!addr) return setStatus('Enter an address first.');
+      $('#btnLookup').disabled = true;
+      try {
+        const r = await L.lookup(addr, $('#token').value.trim(), setStatus);
+        state.address = r.display || addr;
+        if (r.parcelId) { state.parcel = r.parcelId; $('#parcel').value = r.parcelId; }
+        if (r.footprint) { setFootprintAndRooms(r.footprint, num($('#beds').value, 3), num($('#baths').value, 2)); }
+        setStatus((r.footprint ? 'Building outline loaded. ' : 'No outline, use the rectangle option. ') + r.notes.join(' '));
+      } catch (e) { setStatus('Lookup failed: ' + e.message + '. You can still draw a rectangle footprint.'); }
+      $('#btnLookup').disabled = false;
+    };
+
+    $('#roomTable').addEventListener('input', (e) => {
+      const tr = e.target.closest('[data-room]'); if (!tr) return;
+      const r = state.rooms.find((x) => x.id === tr.dataset.room), k = e.target.dataset.rk;
+      r[k] = k === 'name' ? e.target.value : num(e.target.value, r[k]);
+      refreshLight();
+    });
+    $('#roomTable').addEventListener('click', (e) => {
+      if (!e.target.matches('[data-rdel]')) return;
+      state.rooms = state.rooms.filter((r) => r.id !== e.target.closest('[data-room]').dataset.room); renderRooms(); renderAll();
+    });
+    $('#propBody').addEventListener('input', (e) => {
+      const k = e.target.dataset.k; if (!k) return;
+      const eq = scn().equip.find((x) => x.id === state.sel); if (!eq) return;
+      eq[k] = e.target.dataset.t === 'text' ? e.target.value : (e.target.value === '' ? null : num(e.target.value, eq[k]));
+      refreshLight();
+    });
+    $('#propBody').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) removeSel(); });
+  }
+
+  bindUI(); bindPlan();
+  if (load()) {
+    $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
+    $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
+    if (!state.view) fit(); renderRooms(); renderAll();
+  } else loadSample();
+})();

@@ -1,0 +1,58 @@
+:root{--bg:#0d1b2e;--panel:#14263d;--line:#2a4468;--ink:#e6eefb;--mut:#8fa6c6;--acc:#3fa7ff;--ok:#3ecf8e;--warn:#f5b942;--bad:#ff6b6b}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:13px/1.4 system-ui,sans-serif}
+header{display:flex;gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+h1{margin:0;font-size:18px}h1 span{color:var(--acc)}
+h2{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+h3{margin:0 0 6px}
+.grow{flex:1}
+button{background:#1c3556;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}
+button.on{background:var(--acc);color:#04111f;border-color:var(--acc)}
+button.primary{background:var(--acc);color:#04111f;border-color:var(--acc);font-weight:600}
+.seg{display:inline-flex}.seg button{border-radius:0}.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}
+input,select{width:100%;background:#0b172a;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font:inherit}
+label{display:block;color:var(--mut);font-size:11px;margin:6px 0}
+label input,label select{margin-top:2px;color:var(--ink)}
+.row{display:flex;gap:8px;align-items:flex-end}.row>*{flex:1}
+small,.muted{color:var(--mut)}
+.status{color:var(--mut);font-size:12px;min-height:16px;margin:4px 0}
+details{margin:8px 0}summary{cursor:pointer;color:var(--mut)}
+#app{display:grid;grid-template-columns:270px 1fr 330px;height:calc(100% - 46px)}
+aside{overflow:auto;background:var(--panel);padding:10px;border-right:1px solid var(--line)}
+#right{border-right:0;border-left:1px solid var(--line)}
+aside section{margin-bottom:16px}
+main{display:flex;flex-direction:column;min-width:0}
+#toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+.sep{width:1px;height:20px;background:var(--line)}
+#plan{flex:1;width:100%;min-height:0;touch-action:none;cursor:grab;background:#0b3a6b}
+#hint{padding:4px 10px;color:var(--mut);font-size:11px;background:var(--panel);border-top:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:3px 4px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mut);font-weight:500}
+td input{padding:2px 3px;text-align:right}td input.nm{text-align:left}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.card{background:#0b172a;border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.card b{display:block;font-size:18px}.card span{color:var(--mut);font-size:11px}
+.warns{margin:8px 0;padding-left:16px;color:var(--warn);font-size:12px}
+.x{background:none;border:0;color:var(--bad);padding:0 4px}
+/* presentation */
+#present{position:fixed;inset:0;background:var(--bg);overflow:auto;padding:18px 28px;z-index:10}
+#present[hidden]{display:none}
+.pbar{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+.pbar h1{font-size:24px}
+.pcols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.pcols svg{width:100%;height:46vh;background:#0b3a6b;border:1px solid var(--line);border-radius:8px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+.disclaimer{color:var(--mut);font-size:11px;margin-top:14px}
+@media print{
+  body *{visibility:hidden}#present,#present *{visibility:visible}
+  #present{position:absolute;overflow:visible;background:#fff;color:#000}
+  .pbar button{display:none}
+  .card{background:#fff;border-color:#999}.card span,.disclaimer,th{color:#444}
+  th,td{border-color:#bbb}.ok{color:#087f4a}.warn{color:#a56a00}.bad{color:#b00020}
+  .pcols svg{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+@media(max-width:1000px){#app{grid-template-columns:1fr;height:auto}#plan{height:60vh}}
