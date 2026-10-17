@@ -2,7 +2,16 @@
   const H = window.HVAC, L = window.Lookup;
   const $ = (s) => document.querySelector(s);
   const NS = 'http://www.w3.org/2000/svg';
-  const KEY = 'ductlayout.v1';
+  // White-label settings come from config.js (window.BRAND); every field has a default.
+  const BR = window.BRAND || {};
+  const BX = {
+    name: BR.name || 'HVAC Designer', logo: BR.logo || '', accent: BR.accent || '', company: BR.company || {},
+    disclaimer: BR.disclaimer || 'Preliminary sizing estimate, not an ACCA Manual J load calculation.',
+    defaults: Object.assign({ btuPerSqft: 30, theme: 'paper' }, BR.defaults),
+    features: Object.assign({ sample: true, examples: false, lookup: true, print: true }, BR.features),
+    storageKey: BR.storageKey || 'ductlayout.v1', poweredBy: BR.poweredBy || '',
+  };
+  const KEY = BX.storageKey;
   const THEMES = {
     paper: { bg: '#fbfbf4', grid: '#8db8e0', gridOp: 0.45, line: '#111111', supply: '#1d3fc4', return: '#d21a1a', refrig: '#c48a00', sel: '#e6007e', ok: '#0a7a3d', warn: '#b36b00', bad: '#c4001a' },
     blueprint: { bg: '#0b3a6b', grid: '#ffffff', gridOp: 0.09, line: '#cfe3ff', supply: '#ff8a5c', return: '#5ce1ff', refrig: '#ffd75c', sel: '#ffffff', ok: '#3ecf8e', warn: '#f5b942', bad: '#ff6b6b' },
@@ -20,7 +29,7 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', theme: 'paper', walls: [], listing: {}, underlay: null, draft: null, calib: [], cfg: { btuPerSqft: 30 }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   // In-page replacement for confirm()/prompt(), which hosted pages cannot show.
@@ -525,6 +534,9 @@
   function present() {
     const A = H.analyze(state.scenarios.existing, state.rooms, state.cfg), B = H.analyze(state.scenarios.proposed, state.rooms, state.cfg);
     $('#pTitle').textContent = state.address || 'HVAC proposal';
+    const co = BX.company, coLines = [co.phone, co.email, co.website, co.license && 'Lic. ' + co.license].filter(Boolean).map(esc).join(' · ');
+    $('#pCo').innerHTML = (BX.logo ? `<img src="${esc(BX.logo)}" alt="">` : '') + `<b>${esc(co.name || BX.name)}</b>${coLines}`;
+    $('#pDisc').textContent = BX.disclaimer; $('#pPowered').textContent = BX.poweredBy;
     $('#pSub').textContent = [state.parcel && 'Parcel / Folio ' + state.parcel, state.model && 'Current unit ' + state.model, new Date().toLocaleDateString()].filter(Boolean).join(' · ');
     $('#present').hidden = false;
     renderPlan($('#planA'), 'existing', false); renderPlan($('#planB'), 'proposed', false);
@@ -579,7 +591,8 @@
     $('#btnPresent').onclick = present;
     $('#pClose').onclick = () => { $('#present').hidden = true; };
     $('#btnSample').onclick = loadSample;
-    $('#btnDiag').onclick = () => loadExample(window.EXAMPLES.diagonal);
+    $('#btnDiag').onclick = () => loadExample(window.EXAMPLES.demo);
+    $('#pPrint').onclick = () => window.print();
     $('#btnTheme').onclick = () => { state.theme = state.theme === 'paper' ? 'blueprint' : 'paper'; applyTheme(); renderAll(); };
     $('#btnAddWall').onclick = () => { state.walls.push({ id: uid('w'), x1: 0, y1: 0, x2: 10, y2: 0, removed: false }); renderWalls(); renderAll(); };
     $('#wallTable').addEventListener('input', (e) => {
@@ -663,12 +676,25 @@
     $('#propBody').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) removeSel(); });
   }
 
-  bindUI(); bindPlan();
+  function applyBrand() {
+    document.title = BX.name;
+    $('#btuSqft').value = state.cfg.btuPerSqft;
+    $('#brandName').textContent = BX.name;
+    if (BX.logo) { $('#brandLogo').src = BX.logo; $('#brandLogo').hidden = false; }
+    if (BX.accent) document.documentElement.style.setProperty('--acc', BX.accent);
+    $('#btnSample').hidden = !BX.features.sample;
+    $('#btnDiag').hidden = !(BX.features.examples && window.EXAMPLES && window.EXAMPLES.demo);
+    $('#btnLookup').hidden = !BX.features.lookup;
+    $('#pPrint').hidden = !BX.features.print;
+  }
+
+  applyBrand(); bindUI(); bindPlan();
   if (load()) {
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
     $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
     ['sqft', 'beds', 'baths'].forEach((k) => { const el2 = $('#ls' + k[0].toUpperCase() + k.slice(1)); if (el2 && state.listing[k] != null) el2.value = state.listing[k]; });
     state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
     if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
-  } else loadExample(window.EXAMPLES.diagonal);
+  } else if (BX.features.examples && window.EXAMPLES && window.EXAMPLES.demo) loadExample(window.EXAMPLES.demo);
+  else loadSample();
 })();

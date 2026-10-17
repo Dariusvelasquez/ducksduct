@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DuctLayout - HVAC Blueprint Designer</title>
+<title>HVAC Layout Designer</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1>Duct<span>Layout</span></h1>
+  <h1><img id="brandLogo" alt="" hidden><span id="brandName"></span></h1>
   <div class="seg" id="scnSeg">
     <button data-scn="existing" class="on">Existing system</button>
     <button data-scn="proposed">Proposed system</button>
@@ -28,7 +28,7 @@
         <button id="btnLookup" class="primary">Look up</button>
         <button id="btnSample">Sample home</button>
       </div>
-      <button id="btnDiag" title="Real layout recreated from a hand sketch">Example: 8455 Diagonal Rd</button>
+      <button id="btnDiag" title="Real layout recreated from a hand sketch">Demo job (from sketch)</button>
       <div id="status" class="status"></div>
       <label>Parcel ID / Folio #<input id="parcel" placeholder="auto-filled for Hillsborough, Pinellas, Sarasota"></label>
       <details><summary>Other counties: Regrid token (optional)</summary>
@@ -123,6 +123,8 @@
   <div class="pbar">
     <div><h1 id="pTitle"></h1><div id="pSub"></div></div>
     <div class="grow"></div>
+    <div id="pCo"></div>
+    <button id="pPrint">Print / save PDF</button>
     <button id="pClose" class="primary">Close</button>
   </div>
   <div class="pcols">
@@ -130,9 +132,11 @@
     <div><h3>Proposed system</h3><svg id="planB"></svg><div id="statB" class="stats"></div></div>
   </div>
   <div id="pTable"></div>
-  <p class="disclaimer">Preliminary sizing estimate from room area and a rule-of-thumb BTU/sqft factor, not an ACCA Manual J load calculation. Confirm with a full load calculation before final equipment selection.</p>
+  <p class="disclaimer" id="pDisc"></p>
+  <p class="disclaimer" id="pPowered"></p>
 </div>
 
+<script src="config.js"></script>
 <script src="hvac.js"></script>
 <script src="lookup.js"></script>
 <script src="examples.js"></script>

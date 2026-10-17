@@ -1,3 +1,11 @@
+# White-label HVAC layout designer
+
+Static web app: draw duct layouts over a building plan, compare condenser output to room size, and present before/after to customers. See **HANDOFF.md** to deploy and rebrand, `docs/` for the acceptance checklist and agreement outline.
+
+Quick start: `npm test`, `npm run build`, `npm run serve`.
+
+---
+
 # DuctLayout
 
 Browser-based HVAC duct layout and sizing tool. Open `index.html` (no build step, no dependencies).
@@ -25,4 +33,4 @@ Regrid token remains an optional fallback for other states.
 - Cross-check: type the listing's sq ft / beds / baths (Zillow and Realtor.com links open the address; there is no public Zillow API and scraping it violates their terms) and compare against the county record and the drawn rooms. "Scale" resizes the drawing to a chosen source.
 
 ## Example job
-"Example: 8455 Diagonal Rd" loads a real layout recreated from a hand sketch (After scenario). Scale assumed (~27 ft wide) from the OpenStreetMap building outline; Existing is a placeholder (same layout, 3 ton). Verify against the listing sq ft with Cross-check > Scale.
+The "Demo job (from sketch)" button (demo builds only, from `private/`) loads a real layout recreated from a hand sketch (After scenario). Scale assumed (~27 ft wide) from the OpenStreetMap building outline; Existing is a placeholder (same layout, 3 ton). Verify against the listing sq ft with Cross-check > Scale.
