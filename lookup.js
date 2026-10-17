@@ -66,18 +66,66 @@
   const STATE = 'https://gis.fdacs.gov/mapping/rest/services/GIO_Parcels_for_OAWP_Optimized/FeatureServer/0';
   const COUNTY = { 57: 'Hillsborough', 61: 'Pasco', 62: 'Pinellas', 68: 'Sarasota' };
 
-  async function arcPoint(url, lat, lon, fields) {
-    const qs = new URLSearchParams({ geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outFields: fields, returnGeometry: 'false', f: 'json' });
-    const r = await fetch(url + '/query?' + qs);
+  const PASCO = 'https://maps.pascopa.com/arcgis/rest/services/Parcels/MapServer/3';
+
+  // opts.buffer: search radius in metres around the point. opts.geom: also return outlines (as feature.geometry).
+  async function arcQuery(url, lat, lon, fields, opts) {
+    opts = opts || {};
+    const q = { geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326', outSR: '4326', spatialRel: 'esriSpatialRelIntersects', outFields: fields, returnGeometry: opts.geom ? 'true' : 'false', f: 'json' };
+    if (opts.buffer) { q.distance = opts.buffer; q.units = 'esriSRUnit_Meter'; }
+    const r = await fetch(url + '/query?' + new URLSearchParams(q));
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     if (j.error) throw new Error(j.error.message);
-    return j.features.map((f) => f.attributes);
+    return j.features;
   }
+  const arcPoint = async (url, lat, lon, fields) => (await arcQuery(url, lat, lon, fields)).map((f) => f.attributes);
+
+  // Distance in metres from (lat,lon) to the nearest vertex of a polygon's rings.
+  function nearestVertexM(geom, lat, lon) {
+    const kx = 111320 * Math.cos((lat * Math.PI) / 180), ky = 110574;
+    let best = Infinity;
+    ((geom && geom.rings) || []).forEach((ring) => ring.forEach(([x, y]) => { best = Math.min(best, Math.hypot((x - lon) * kx, (y - lat) * ky)); }));
+    return best;
+  }
+  const houseNo = (a) => { const m = String(a || '').match(/^\s*(\d+)/); return m ? m[1] : null; };
+  const hasNo = (field, no) => no && new RegExp('^\\s*0*' + no + '\\b').test(String(field || ''));
   const pos = (v) => (v > 0 ? v : null);
 
   // Returns { county, parcelId, sqft, beds, baths, stories, yearBuilt, source, note } or null.
-  async function countyParcel(lat, lon) {
+  async function countyParcel(lat, lon, address) {
+    const hit = await countyParcelAt(lat, lon);
+    if (hit) return hit;
+    return countyParcelNear(lat, lon, houseNo(address));
+  }
+
+  // Geocoded house points often land a few feet outside the parcel polygon, so search a small radius and
+  // choose by house number where the county layer carries addresses, else by nearest outline (flagged approximate).
+  async function countyParcelNear(lat, lon, no) {
+    const B = 35;
+    const [h, sa, pa, st] = await Promise.allSettled([
+      arcPoint2(HILLS, lat, lon, 'FOLIO_NUMB,FOLIO,SITE_ADDR,tBEDS,tBATHS,tSTORIES,HEAT_AR,ACT', B),
+      arcPoint2(SARASOTA, lat, lon, 'PARCELID,PHYADDR1,TOTLVGAREA,ACTYRBLT', B),
+      arcPoint2(PASCO, lat, lon, 'ParcelID,PHYS_STREET', B),
+      arcQuery(STATE, lat, lon, 'CO_NO,PARCEL_ID', { buffer: B, geom: true }),
+    ]);
+    const rows = (r) => (r.status === 'fulfilled' ? r.value : []);
+    const hv = rows(h).find((a) => hasNo(a.SITE_ADDR, no));
+    if (hv) return { county: 'Hillsborough', parcelId: hv.FOLIO_NUMB || hv.FOLIO, sqft: pos(hv.HEAT_AR), beds: pos(hv.tBEDS), baths: pos(hv.tBATHS), stories: pos(hv.tSTORIES), yearBuilt: pos(hv.ACT), address: hv.SITE_ADDR, source: 'Hillsborough County Property Appraiser' };
+    const sv = rows(sa).find((a) => hasNo(a.PHYADDR1, no));
+    if (sv) return { county: 'Sarasota', parcelId: sv.PARCELID, sqft: pos(sv.TOTLVGAREA), yearBuilt: pos(sv.ACTYRBLT), address: sv.PHYADDR1, source: 'Sarasota County parcel data (2023 vintage)' };
+    const pv = rows(pa).find((a) => hasNo(a.PHYS_STREET, no));
+    if (pv) return { county: 'Pasco', parcelId: pv.ParcelID, address: pv.PHYS_STREET, source: 'Pasco County Property Appraiser', note: 'Pasco publishes no living area here, so enter beds/baths/sq ft yourself.' };
+    const sf = (st.status === 'fulfilled' ? st.value : []).map((f) => ({ a: f.attributes, d: nearestVertexM(f.geometry, lat, lon) })).sort((x, y) => x.d - y.d)[0];
+    if (sf) {
+      const county = COUNTY[sf.a.CO_NO] || 'County ' + sf.a.CO_NO, id = sf.a.PARCEL_ID || '';
+      return { county, parcelId: county === 'Pinellas' ? id.replace(/ /g, '-') : id, source: 'Florida DOR statewide parcels', approx: true, note: 'Parcel chosen by proximity to the address point. Verify the number on the property appraiser site. Enter beds/baths/sq ft yourself.' };
+    }
+    return null;
+  }
+  const arcPoint2 = async (url, lat, lon, fields, buffer) => (await arcQuery(url, lat, lon, fields, { buffer })).map((f) => f.attributes);
+
+  async function countyParcelAt(lat, lon) {
     const [h, sa, st] = await Promise.allSettled([
       arcPoint(HILLS, lat, lon, 'FOLIO_NUMB,FOLIO,SITE_ADDR,tBEDS,tBATHS,tSTORIES,HEAT_AR,ACT,DOR_CODE'),
       arcPoint(SARASOTA, lat, lon, 'PARCELID,PHYADDR1,TOTLVGAREA,ACTYRBLT,NOBULDNG,NORESUNTS'),
@@ -121,7 +169,7 @@
     try { const f = await footprint(g.lat, g.lon); out.footprint = f.pts; pt = f.center; } catch (e) { out.notes.push('Footprint: ' + e.message); }
     say('Fetching county parcel record...');
     try {
-      out.record = await countyParcel(pt.lat, pt.lon);
+      out.record = await countyParcel(pt.lat, pt.lon, address);
       if (out.record) out.parcelId = out.record.parcelId || '';
       else out.notes.push('No county parcel found at this point.');
     } catch (e) { out.notes.push('Parcel: ' + e.message); }

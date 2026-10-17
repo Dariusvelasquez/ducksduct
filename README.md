@@ -16,5 +16,6 @@ Paper (default, hand-drawn-sketch style) and blueprint themes; No A/C rooms, rem
 No API key needed for these counties; the lookup queries public property-appraiser GIS services straight from the browser:
 - Hillsborough: folio #, beds, baths, stories, heated sq ft, year built (HC_ParcelsPublic).
 - Sarasota: parcel ID, living area, year built (2023 vintage layer).
-- Pinellas (incl. Dunedin), Pasco (incl. New Port Richey) and anywhere else in Florida: parcel ID only (Florida DOR statewide parcels).
+- Pasco (incl. New Port Richey): parcel ID matched by house number from the Pasco PA layer; no living area published.
+- Pinellas (incl. Dunedin) and anywhere else in Florida: parcel ID only (Florida DOR statewide parcels). When the geocoded point misses the lot, the nearest parcel is chosen and flagged "approximate".
 Regrid token remains an optional fallback for other states.
