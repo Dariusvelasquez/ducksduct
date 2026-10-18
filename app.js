@@ -1326,6 +1326,13 @@
     state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
     if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
   } else { fit(); renderRooms(); renderWalls(); renderAll(); }   // first visit: blank plan
+  // installable and usable offline (needs https or localhost; the build supplies sw.js and the manifest)
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  let installEvt = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; $('#btnInstall').hidden = false; });
+  $('#btnInstall').onclick = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $('#btnInstall').hidden = true; };
+  const netBadge = () => { $('#net').hidden = navigator.onLine; };
+  window.addEventListener('online', netBadge); window.addEventListener('offline', netBadge); netBadge();
   document.body.dataset.tab = 'plan';
   lastSnap = sig(); updateUndoButtons();
   setTimeout(cleanUpMedia, 4000);

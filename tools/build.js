@@ -37,6 +37,14 @@ fs.writeFileSync(path.join(dist, 'index.html'), html);
 for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dist, f), c);
 if (fs.existsSync(path.join(root, 'assets'))) fs.cpSync(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
 
+// installable app: a manifest carrying the brand name, and a service worker that knows every file to keep offline
+const manifest = JSON.parse(read('manifest.webmanifest'));
+manifest.name = brand.name; manifest.short_name = brand.name.length > 12 ? brand.name.slice(0, 12).trim() : brand.name;
+fs.writeFileSync(path.join(dist, 'manifest.webmanifest'), JSON.stringify(manifest, null, 2));
+const listFiles = (dir, rel) => fs.readdirSync(dir).flatMap((f) => (fs.statSync(path.join(dir, f)).isDirectory() ? listFiles(path.join(dir, f), rel + f + '/') : [rel + f]));
+const shell = ['./'].concat(listFiles(dist, '').filter((f) => f !== 'sw.js' && f !== 'index.single.html'));
+fs.writeFileSync(path.join(dist, 'sw.js'), read('sw.js').replace('__BUILD__', Date.now().toString(36)).replace('__SHELL__', JSON.stringify(shell)));
+
 if (args.has('--single')) {
   const body = html.match(/<body>([\s\S]*?)<script src="config.js">/)[1];
   const js = ['config.js', 'hvac.js', 'layout.js', 'geo.js', 'sizing.js', 'exif.js', 'media.js', 'detect.js', 'lookup.js', 'app.js'].map((f) => files[f]).join('\n');
