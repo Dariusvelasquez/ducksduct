@@ -77,6 +77,15 @@
       <div id="xcheck"></div>
     </section>
 
+    <section id="sizingSec">
+      <h2>Sizing</h2>
+      <label>Home age<select id="szEra"></select></label>
+      <label>Insulation and windows<select id="szEnv"></select></label>
+      <label>Square footage used
+        <select id="szBasis"><option value="auto">Automatic: county record, then listing, then drawn</option><option value="drawn">Drawn rooms (A/C)</option><option value="record">County record</option><option value="listing">Listing</option><option value="footprint">Footprint outline x floors</option></select></label>
+      <div id="szOut" class="status"></div>
+    </section>
+
     <section>
       <h2>Current AC</h2>
       <label>Model number<input id="model" placeholder="e.g. 4TTR4036 or GSX140361"></label>
@@ -136,6 +145,7 @@
   <aside id="right">
     <section id="props"><h2>Selected</h2><div id="propBody" class="muted">Nothing selected</div></section>
     <section id="results"></section>
+    <section id="quote"></section>
   </aside>
 </div>
 
@@ -164,6 +174,7 @@
 <script src="hvac.js"></script>
 <script src="layout.js"></script>
 <script src="geo.js"></script>
+<script src="sizing.js"></script>
 <script src="detect.js"></script>
 <script src="lookup.js"></script>
 <script src="app.js"></script>

@@ -8,9 +8,10 @@
     name: BR.name || 'HVAC Designer', logo: BR.logo || '', accent: BR.accent || '', company: BR.company || {},
     disclaimer: BR.disclaimer || 'Preliminary sizing estimate, not an ACCA Manual J load calculation.',
     defaults: Object.assign({ btuPerSqft: 30, theme: 'paper' }, BR.defaults),
-    features: Object.assign({ sample: true, lookup: true, print: true }, BR.features),
+    features: Object.assign({ sample: true, lookup: true, print: true, showPrices: false }, BR.features),
     storageKey: BR.storageKey || 'ductlayout.v2', poweredBy: BR.poweredBy || '',
     map: Object.assign({ tileUrl: '', attribution: '', maxZoom: 19 }, BR.map),
+    sizing: BR.sizing || null, catalog: BR.catalog || null,
   };
   const KEY = BX.storageKey;
   const THEMES = {
@@ -30,7 +31,7 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, geo: null, mapOn: false, mapOp: 0.9, point: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, sizing: { era: BR.sizing ? BR.sizing.defaultEra : '', envelope: BR.sizing ? BR.sizing.defaultEnvelope : '', basis: 'auto' }, geo: null, mapOn: false, mapOp: 0.9, point: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   // In-page replacement for confirm()/prompt(), which hosted pages cannot show.
@@ -53,6 +54,71 @@
     return false;
   }
   const scn = () => state.scenarios[state.active];
+
+  /* ---------- sizing, equipment matching, quote ---------- */
+  function basisSqft() {
+    const b = state.sizing.basis, r = state.record || {}, drawn = Math.round(condArea()), fp = state.footprint.length > 2 ? Math.round(polyAreaFt2(state.footprint) * (r.stories || 1)) : 0;
+    const opts = { drawn: [drawn, 'drawn rooms'], record: [r.sqft, 'county record'], listing: [state.listing.sqft, 'listing'], footprint: [fp, 'footprint outline' + (r.stories > 1 ? ' x ' + r.stories + ' floors' : '')] };
+    if (b !== 'auto' && opts[b] && opts[b][0] > 0) return { sqft: opts[b][0], label: opts[b][1] };
+    for (const k of ['record', 'listing', 'drawn']) if (opts[k][0] > 0) return { sqft: opts[k][0], label: opts[k][1] };
+    return { sqft: 0, label: '' };
+  }
+  function sizingNow() { const b = basisSqft(); return b.sqft > 0 ? { ...b, ...Sizing.suggest(b.sqft, state.cfg.btuPerSqft) } : null; }
+  function setFactorFromTable() { if (BX.sizing) state.cfg.btuPerSqft = Sizing.factor(BX.sizing, state.sizing.era, state.sizing.envelope); $('#btuSqft').value = state.cfg.btuPerSqft; }
+  function fillSizingSelects() {
+    if (!BX.sizing) { $('#sizingSec').hidden = true; return; }
+    $('#szEra').innerHTML = BX.sizing.era.map((e) => `<option value="${esc(e.id)}">${esc(e.label)} (${e.btuPerSqft} BTU/sqft)</option>`).join('');
+    $('#szEnv').innerHTML = BX.sizing.envelope.map((e) => `<option value="${esc(e.id)}">${esc(e.label)}</option>`).join('');
+  }
+  function renderSizing() {
+    if (!BX.sizing) return;
+    $('#szEra').value = state.sizing.era; $('#szEnv').value = state.sizing.envelope; $('#szBasis').value = state.sizing.basis;
+    const s = sizingNow();
+    $('#szOut').innerHTML = s ? `${s.sqft} sq ft (${esc(s.label)}) x ${state.cfg.btuPerSqft} BTU/sqft = ${s.btu.toLocaleString()} BTU = ${s.tons} ton.<br><b>Suggested size: ${s.rounded} ton</b> (range ${s.low} to ${s.high} ton).` : 'Add rooms or enter a square footage to get a suggestion.';
+  }
+  // runs and register sizes taken off the drawing, for the quote
+  function takeoff(key) {
+    const s = state.scenarios[key], a = H.analyze(s, state.rooms, state.cfg), byId = Object.fromEntries(s.equip.map((e) => [e.id, e])), runs = [], regDia = {};
+    s.ducts.forEach((d) => {
+      const A = byId[d.a], B = byId[d.b]; if (!A || !B) return;
+      const pa = port(A, d.kind), pb = port(B, d.kind), pts = [pa, ...(d.via || []), pb];
+      let len = 0; for (let i = 0; i < pts.length - 1; i++) len += Math.abs(pts[i + 1].x - pts[i].x) + Math.abs(pts[i + 1].y - pts[i].y);
+      if (d.kind === 'refrig') len = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+      else if (d.flex && !(d.via && d.via.length)) len = (Math.hypot(pb.x - pa.x, pb.y - pa.y) + len) / 2;
+      const dia = d.kind === 'refrig' ? 0 : d.dia > 0 ? d.dia : H.ductDia(a.ductFlow[d.id] || 0);
+      runs.push({ kind: d.kind, dia, len, flex: !!d.flex });
+      [A, B].forEach((q) => { if (q.type === 'supply' && dia) regDia[q.id] = Math.max(regDia[q.id] || 0, dia); });
+    });
+    return { a, runs, regDia };
+  }
+  const quoteFor = (key) => { const t = takeoff(key); return Sizing.quote(state.scenarios[key], t.a, BX.catalog, t.runs, t.regDia); };
+  const $$ = (n) => '$' + Math.round(n).toLocaleString();
+  function renderQuote() {
+    const box = $('#quote');
+    if (!BX.catalog) { box.hidden = true; return; }
+    if (!scn().equip.length) { box.innerHTML = '<h2>Parts and quote</h2><p class="muted">Add equipment to the plan and the parts list builds itself.</p>'; return; }
+    const q = quoteFor(state.active), other = quoteFor(state.active === 'existing' ? 'proposed' : 'existing');
+    const ex = state.active === 'existing' ? q : other, pr = state.active === 'proposed' ? q : other;
+    box.innerHTML = `<h2>Parts and quote (${state.active})</h2>
+      ${BX.catalog.note ? `<p class="warn">${esc(BX.catalog.note)}</p>` : ''}
+      <table><tr><th>Item</th><th>Qty</th><th>Each</th><th>Total</th></tr>${q.lines.map((l) => `<tr><td>${esc(l.desc)}</td><td>${l.qty}${l.unit === 'ft' ? ' ft' : ''}</td><td>${l.unitPrice.toFixed(2)}</td><td>${l.total.toFixed(2)}</td></tr>`).join('')}
+      <tr><td colspan="3">Materials</td><td>${$$(q.materials)}</td></tr><tr><td colspan="3">Markup ${BX.catalog.markupPct}%</td><td>${$$(q.markup)}</td></tr><tr><td colspan="3">Tax ${BX.catalog.taxPct}%</td><td>${$$(q.tax)}</td></tr>
+      <tr><td colspan="3">Labor (${q.hours} h)</td><td>${$$(q.labor)}</td></tr><tr><td colspan="3"><b>Total</b></td><td><b>${$$(q.total)}</b></td></tr></table>
+      <p class="muted">Existing ${$$(ex.total)} · Proposed ${$$(pr.total)} · difference ${pr.total - ex.total >= 0 ? '+' : '-'}${$$(Math.abs(pr.total - ex.total))}</p>
+      <div class="row"><button id="btnCsv">Export CSV</button><button id="btnCopyList">Copy list</button></div>`;
+  }
+  const listText = (q, name) => [name, ...q.lines.map((l) => `${l.qty}${l.unit === 'ft' ? ' ft' : ' x'} ${l.desc}: ${l.total.toFixed(2)}`), `Materials ${q.materials.toFixed(2)}, markup ${q.markup.toFixed(2)}, tax ${q.tax.toFixed(2)}, labor ${q.labor.toFixed(2)} (${q.hours} h)`, `TOTAL ${q.total.toFixed(2)}`].join('\n');
+  // equipment suggestion for the selected item
+  function matchHtml(e, a) {
+    if (!BX.catalog || !['condenser', 'ahu', 'head'].includes(e.type)) return '';
+    const sug = sizingNow(), sys = scn().equip.filter((x) => x.type === 'condenser' || x.type === 'ahu').length ? Math.max(1, scn().equip.filter((x) => x.type === 'condenser').length) : 1;
+    let ctx;
+    if (e.type === 'head') { const room = state.rooms.find((r) => H.inRoom(e, r)), row = room && a.rooms.find((r) => r.id === room.id); ctx = { btu: row && row.required > 0 ? row.required : 12000, room: room && room.name }; }
+    else { if (!sug) return ''; ctx = { tons: Math.max(1, Math.ceil((sug.tons / sys) * 2 - 1e-9) / 2) }; }
+    const m = Sizing.matchFor(BX.catalog, e, ctx); if (!m || !m.item) return '';
+    const val = e.type === 'head' ? m.item.btu : m.item.tons, cur = e.type === 'head' ? e.btu : e.tons;
+    return `<p class="muted">Suggested for this home: <b>${esc(m.item.label)}</b> (needs ${e.type === 'head' ? Math.round(m.need).toLocaleString() + ' BTU' + (ctx.room ? ' in ' + esc(ctx.room) : '') : m.need + ' ton'}).</p>${cur === val ? '<p class="ok">This item already matches.</p>' : `<button data-apply-match="${val}">Set to ${e.type === 'head' ? val / 1000 + 'k BTU' : val + ' ton'}</button>`}`;
+  }
 
   /* ---------- map under the plan ---------- */
   const mapShown = () => !!(state.mapOn && state.geo && BX.map.tileUrl);
@@ -128,8 +194,8 @@
 
   /* ---------- jobs library, export / import ---------- */
   const JOBS_KEY = KEY + '.jobs';
-  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated', 'geo', 'mapOn', 'point'];
-  const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'geo', 'mapOn'];
+  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated', 'geo', 'mapOn', 'point', 'sizing'];
+  const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'geo', 'mapOn', 'sizing'];
   const sig = () => JSON.stringify(SIG.map((k) => state[k]));
   const hasWork = () => state.rooms.length > 0 || ['existing', 'proposed'].some((k) => state.scenarios[k].equip.length > 0);
   const isDirty = () => hasWork() && sig() !== state.savedSig;
@@ -143,12 +209,12 @@
   }
   const validGeo = (g) => !!g && ['lat0', 'lon0', 'ang', 'mx', 'my', 's'].every((k) => typeof g[k] === 'number' && isFinite(g[k])) && Math.abs(g.lat0) <= 90 && Math.abs(g.lon0) <= 180;
   function resetJob() {
-    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, geo: null, mapOn: false, point: null, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
+    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, geo: null, mapOn: false, point: null, sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' }, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
     ['jobName', 'lsSqft', 'lsBeds', 'lsBaths'].forEach((i) => { $('#' + i).value = ''; });
   }
   function applyJob(d) {
     Object.assign(state, { address: '', parcel: '', model: '', footprint: [], rooms: [], walls: [], listing: {}, record: null, generated: false, curTons: 5, active: 'existing',
-      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, geo: null, mapOn: false, point: null });
+      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, geo: null, mapOn: false, point: null, sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' } });
     CORE.forEach((k) => { if (d[k] !== undefined && d[k] !== null) state[k] = d[k]; });
     if (!validGeo(state.geo)) { state.geo = null; state.mapOn = false; }
     state.underlay = d.underlay && typeof d.underlay.url === 'string' && /^data:image\//.test(d.underlay.url) ? d.underlay : null;
@@ -456,6 +522,13 @@
     return `<p class="muted">${esc(bits)}${r.note ? ' · ' + esc(r.note) : ''}${r.estimated ? ' · footprint is a rectangle estimated from this sq ft, not the real shape. Use Edit rooms to adjust.' : ''}${off ? `<br>Drawn rooms total ${drawn} sf vs ${r.sqft} sf on record. <button id="btnScale">Scale rooms to record</button>` : ''}</p>`;
   }
 
+  function suggestHtml(a) {
+    const s = sizingNow(); if (!s) return '';
+    const hasSys = scn().equip.some((e) => e.type === 'condenser' || e.type === 'ahu'), cur = a.total.installedTons;
+    const note = state.record && state.record.stories > 1 && /record/.test(s.label) ? ' The plan shows one floor; sizing uses the whole living area.' : '';
+    return `<p class="muted">Suggested system size: <b>${s.rounded} ton</b> (range ${s.low} to ${s.high}) from ${s.sqft} sq ft (${esc(s.label)}) at ${state.cfg.btuPerSqft} BTU/sqft. Installed here: ${tonsLabel(cur)} ton.${note}</p>${hasSys && cur !== s.rounded ? `<button data-fit-sys="${s.rounded}">Set equipment to ${s.rounded} ton</button>` : ''}`;
+  }
+
   function renderResults() {
     if (!state.rooms.length) { $('#results').innerHTML = `<h2>${state.active === 'existing' ? 'Existing' : 'Proposed'} system</h2><p class="muted">Add or trace rooms to see the capacity comparison.</p>`; return; }
     const a = H.analyze(scn(), state.rooms, state.cfg);
@@ -465,7 +538,8 @@
       <div class="cards">${statCards(a)}</div>
       <table><tr><th>Room</th><th>sf</th><th>Need BTU</th><th>CFM</th><th>Out BTU</th><th>Match</th></tr>${rows}
       <tr><td><b>Total</b></td><td>${Math.round(t.sqft)}</td><td>${Math.round(t.requiredBtu)}</td><td>${Math.round(t.systemCfm)}</td><td>${Math.round(t.deliveredBtu)}</td><td></td></tr></table>
-      <p class="muted">Recommended capacity for this footprint: <b>${recommend(a)} ton</b> (rule-of-thumb ${state.cfg.btuPerSqft} BTU/sqft). Match = delivered / needed: under 85% is starved, over 125% is oversupplied.</p>
+      ${suggestHtml(a)}
+      <p class="muted">Match = delivered / needed: under 85% is starved, over 125% is oversupplied.</p>
       ${a.warnings.length ? '<ul class="warns">' + a.warnings.map((w) => `<li>${esc(w)}</li>`).join('') + '</ul>' : ''}`;
   }
 
@@ -512,7 +586,7 @@
     if (e.type === 'return') h += `<label>Grille size<input data-k="size" data-t="text" value="${esc(e.size || '20x20')}"></label>`;
     if (e.type === 'supply') h += f('weight', 'Damper balance weight (higher = more air)', 0.5);
     if (e.type === 'supply' || e.type === 'return') h += `<p class="muted">Airflow: ${Math.round(a.cfm || 0)} CFM · ${H.ductDia(a.cfm || 0)}" round duct</p>`;
-    h += `<div class="row"><label>X ft<input data-k="x" type="number" step="0.5" value="${e.x}"></label><label>Y ft<input data-k="y" type="number" step="0.5" value="${e.y}"></label></div><div class="row"><button data-rot>Rotate 90&deg; (R)</button><button data-dup>Duplicate (Ctrl+D)</button></div><button class="x" data-del>Delete item</button>`;
+    h += `<div class="row"><label>X ft<input data-k="x" type="number" step="0.5" value="${e.x}"></label><label>Y ft<input data-k="y" type="number" step="0.5" value="${e.y}"></label></div><div class="row"><button data-rot>Rotate 90&deg; (R)</button><button data-dup>Duplicate (Ctrl+D)</button></div>${matchHtml(e, H.analyze(s, state.rooms, state.cfg))}<button class="x" data-del>Delete item</button>`;
     body.innerHTML = h;
   }
 
@@ -547,14 +621,14 @@
   function renderAll() {
     document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
-    renderResults(); renderProps(); renderXcheck(); renderJobs(); renderMapUI();
+    renderResults(); renderProps(); renderXcheck(); renderJobs(); renderMapUI(); renderSizing(); renderQuote();
     if (!restoring) commitHist();   // a finished action (drop, rotate, delete, end of a drag) is its own undo step
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
     document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
     $('#plan').style.cursor = state.tool === 'select' ? 'grab' : 'crosshair';
     save();
   }
-  function refreshLight() { renderPlan($('#plan'), state.active, true); renderResults(); renderJobState(); save(); }
+  function refreshLight() { renderPlan($('#plan'), state.active, true); renderResults(); renderSizing(); renderQuote(); renderJobState(); save(); }
 
   /* ---------- building rooms and layouts ---------- */
   function autoLayout(key, opts) {
@@ -867,6 +941,13 @@
     const rows = A.rooms.map((r, i) => { const q = B.rooms[i]; return `<tr><td>${esc(r.name)}</td><td>${Math.round(r.sqft)}</td><td>${Math.round(r.required)}</td><td>${Math.round(r.delivered)}</td><td class="${pctCls(r.pct)}">${pctText(r)}</td><td>${Math.round(q.delivered)}</td><td class="${pctCls(q.pct)}">${pctText(q)}</td></tr>`; }).join('');
     $('#pTable').innerHTML = `<table><tr><th>Room</th><th>sq ft</th><th>Needed BTU</th><th>Existing BTU</th><th>Existing match</th><th>Proposed BTU</th><th>Proposed match</th></tr>${rows}</table>
       <p>Condenser size change: <b>${tonsLabel(A.total.installedTons)} ton &rarr; ${tonsLabel(B.total.installedTons)} ton</b> (${Math.round(A.total.sqftPerTon)} &rarr; ${Math.round(B.total.sqftPerTon)} sq ft per ton).</p>`;
+    if (BX.features.showPrices && BX.catalog) {
+      const qa = quoteFor('existing'), qb = quoteFor('proposed'), main = (q) => q.lines.filter((l) => /^(c|a|h):/.test(l.key)).map((l) => esc(l.desc)).join(', ') || 'no equipment yet';
+      $('#pTable').insertAdjacentHTML('beforeend', `<h3 style="margin-top:14px">Estimated price</h3><table><tr><th></th><th>Existing layout</th><th>Proposed layout</th></tr>
+        <tr><td>Equipment</td><td style="text-align:right">${main(qa)}</td><td style="text-align:right">${main(qb)}</td></tr>
+        <tr><td>Materials and markup</td><td>${$$(qa.materials + qa.markup)}</td><td>${$$(qb.materials + qb.markup)}</td></tr><tr><td>Tax</td><td>${$$(qa.tax)}</td><td>${$$(qb.tax)}</td></tr>
+        <tr><td>Labor</td><td>${$$(qa.labor)}</td><td>${$$(qb.labor)}</td></tr><tr><td><b>Total</b></td><td><b>${$$(qa.total)}</b></td><td><b>${$$(qb.total)}</b></td></tr></table>`);
+    }
   }
 
   /* ---------- wiring ---------- */
@@ -893,6 +974,16 @@
       fr.readAsDataURL(f);
     };
     $('#btnDetect').onclick = detectRooms;
+    fillSizingSelects();
+    $('#szEra').onchange = (e) => { state.sizing.era = e.target.value; setFactorFromTable(); renderAll(); };
+    $('#szEnv').onchange = (e) => { state.sizing.envelope = e.target.value; setFactorFromTable(); renderAll(); };
+    $('#szBasis').onchange = (e) => { state.sizing.basis = e.target.value; renderAll(); };
+    $('#results').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.fitSys; if (!v) return; scn().equip.forEach((x) => { if (x.type === 'condenser' || x.type === 'ahu') x.tons = +v; }); renderAll(); });
+    $('#quote').addEventListener('click', (e) => {
+      const q = quoteFor(state.active), name = `${state.address || 'Job'} - ${state.active} system`;
+      if (e.target.id === 'btnCsv') downloadText('quote-' + state.active + '.csv', Sizing.csv(q, name), 'text/csv');
+      else if (e.target.id === 'btnCopyList') { const t = listText(q, name); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => setStatus('Parts list copied.'), () => setStatus('Could not copy. Use Export CSV instead.')); }
+    });
     $('#mapOn').onchange = (e) => { state.mapOn = e.target.checked; renderAll(); };
     $('#mapOp').oninput = (e) => { state.mapOp = e.target.value / 100; refreshLight(); };
     $('#mapRot').onchange = (e) => { if (state.geo) { state.geo.rot = num(e.target.value, 0); renderAll(); } };
@@ -980,6 +1071,7 @@
         if (r.parcelId) { state.parcel = r.parcelId; $('#parcel').value = r.parcelId; }
         state.record = r.record || null;
         if (r.lat != null) state.point = { lat: r.lat, lon: r.lon };
+        if (BX.sizing && state.record && state.record.yearBuilt) { const era = Sizing.eraFromYear(BX.sizing, state.record.yearBuilt); if (era) { state.sizing.era = era; setFactorFromTable(); } }
         if (state.record) {
           if (state.record.beds) $('#beds').value = state.record.beds;
           if (state.record.baths) $('#baths').value = Math.max(1, Math.round(state.record.baths));
@@ -1029,6 +1121,7 @@
       if (e.target.matches('[data-del]')) removeSel();
       else if (e.target.matches('[data-rot]')) rotateSel();
       else if (e.target.matches('[data-dup]')) duplicateSel();
+      else if (e.target.matches('[data-apply-match]')) { const x = scn().equip.find((q) => q.id === state.sel); if (x) { x[x.type === 'head' ? 'btu' : 'tons'] = +e.target.dataset.applyMatch; renderAll(); } }
       else if (e.target.matches('[data-straight]')) { const du = scn().ducts.find((x) => x.id === state.sel); if (du) { du.via = []; renderAll(); } }
     });
   }

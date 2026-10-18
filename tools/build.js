@@ -32,14 +32,14 @@ const csp = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inl
 let html = read('index.html')
   .replace(/<title>.*?<\/title>/, `<title>${brand.name.replace(/[<>&]/g, '')}</title>\n<meta http-equiv="Content-Security-Policy" content="${csp}">`);
 
-const files = { 'style.css': read('style.css'), 'hvac.js': read('hvac.js'), 'layout.js': read('layout.js'), 'geo.js': read('geo.js'), 'detect.js': read('detect.js'), 'lookup.js': read('lookup.js'), 'app.js': read('app.js'), 'config.js': config };
+const files = { 'style.css': read('style.css'), 'hvac.js': read('hvac.js'), 'layout.js': read('layout.js'), 'geo.js': read('geo.js'), 'sizing.js': read('sizing.js'), 'detect.js': read('detect.js'), 'lookup.js': read('lookup.js'), 'app.js': read('app.js'), 'config.js': config };
 fs.writeFileSync(path.join(dist, 'index.html'), html);
 for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dist, f), c);
 if (fs.existsSync(path.join(root, 'assets'))) fs.cpSync(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
 
 if (args.has('--single')) {
   const body = html.match(/<body>([\s\S]*?)<script src="config.js">/)[1];
-  const js = ['config.js', 'hvac.js', 'layout.js', 'geo.js', 'detect.js', 'lookup.js', 'app.js'].map((f) => files[f]).join('\n');
+  const js = ['config.js', 'hvac.js', 'layout.js', 'geo.js', 'sizing.js', 'detect.js', 'lookup.js', 'app.js'].map((f) => files[f]).join('\n');
   if (/<\/script/i.test(js)) throw new Error('inline script contains </script');
   fs.writeFileSync(path.join(dist, 'index.single.html'), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${brand.name}</title><style>${files['style.css']}</style></head><body>${body}<script>${js}</script></body></html>`);
 }
