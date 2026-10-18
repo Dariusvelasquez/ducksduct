@@ -9,7 +9,8 @@ Run on the deployed URL, on a laptop and on a tablet. Tick each item; note the d
 - [ ] Add a splitter between the air handler and two outlets; airflow splits.
 - [ ] Untick A/C on a room; it hatches "NO A/C" and drops out of required load.
 - [ ] Look up a Hillsborough address: folio, beds, baths and heated sq ft fill in. Repeat for a Sarasota, a Pasco and a Pinellas address (Pinellas: parcel ID only).
-- [ ] Lookup failure shows a readable message and manual rectangle entry still works.
+- [ ] Lookup failure shows a readable message. When the map server is down, the parcel still fills, a rectangle is estimated from the record sq ft (Hillsborough, Sarasota), or the sq-ft form opens (Pasco, Pinellas). "Build from sq ft" works.
+- [ ] Click a wall to select it; Delete (key or button) removes it. The walls table updates.
 - [ ] Upload a floor-plan image, set the scale on a known wall, draw a room and a wall over it.
 - [ ] Enter a listing sq ft in Cross-check; the difference is flagged; Scale resizes the drawing.
 - [ ] Existing vs Proposed tabs hold separate layouts; "Copy existing to proposed" works.

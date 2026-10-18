@@ -1,12 +1,12 @@
 /* Address -> coordinates, building footprint (OpenStreetMap) and parcel/folio number (Regrid, needs a token). */
 (function (root) {
-  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
 
   async function geocode(address) {
     const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address));
     if (!r.ok) throw new Error('Geocoder error ' + r.status);
     const j = await r.json();
-    if (!j.length) throw new Error('Address not found');
+    if (!j.length) throw new Error('Address not found. Check the spelling and include city, state and ZIP');
     return { lat: +j[0].lat, lon: +j[0].lon, display: j[0].display_name };
   }
 
@@ -41,11 +41,13 @@
   async function overpass(query) {
     let lastErr;
     for (const url of OVERPASS) {
+      const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 15000);   // a hung server must not stall the lookup
       try {
-        const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: ctl.signal });
         if (r.ok) return await r.json();
-        lastErr = new Error('Overpass error ' + r.status);
-      } catch (e) { lastErr = e; }
+        lastErr = new Error('map server error ' + r.status);
+      } catch (e) { lastErr = e.name === 'AbortError' ? new Error('map server timed out') : e; }
+      finally { clearTimeout(timer); }
     }
     throw lastErr;
   }
@@ -156,6 +158,12 @@
     return { parcelId: p.parcelnumb || p.parcelnumb_no_formatting || '', sqft: p.ll_bldg_footprint_sqft || p.ll_gisacre || '', raw: p };
   }
 
+  // Rough rectangle from living area when no real outline is available (about 1.4 : 1, rounded to 0.5 ft).
+  function estimateFootprint(sqft, stories) {
+    const area = sqft / Math.max(1, stories || 1), w = Math.sqrt(area * 1.4), r = (v) => Math.round(v * 2) / 2;
+    return { w: r(w), d: r(area / w) };
+  }
+
   function rectFootprint(w, d) { return [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: d }, { x: 0, y: d }]; }
 
   async function lookup(address, token, onStatus) {
@@ -166,7 +174,7 @@
     out.lat = g.lat; out.lon = g.lon; out.display = g.display;
     say('Fetching building outline...');
     let pt = { lat: g.lat, lon: g.lon };
-    try { const f = await footprint(g.lat, g.lon); out.footprint = f.pts; pt = f.center; } catch (e) { out.notes.push('Footprint: ' + e.message); }
+    try { const f = await footprint(g.lat, g.lon); out.footprint = f.pts; pt = f.center; } catch (e) { out.notes.push('Building outline not available right now (' + e.message + ').'); }
     say('Fetching county parcel record...');
     try {
       out.record = await countyParcel(pt.lat, pt.lon, address);
@@ -180,5 +188,5 @@
     return out;
   }
 
-  root.Lookup = { lookup, geocode, footprint, parcel, countyParcel, rectFootprint, toFeet };
+  root.Lookup = { lookup, geocode, footprint, parcel, countyParcel, rectFootprint, estimateFootprint, toFeet };
 })(window);

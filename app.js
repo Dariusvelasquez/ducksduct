@@ -310,6 +310,11 @@
       }
       if (interactive && state.sel === d.id) el('path', { d: p.dpath, fill: 'none', stroke: COL.sel, 'stroke-width': 0.3, 'stroke-dasharray': '0.4 0.4', 'pointer-events': 'none' }, svg);
     });
+    // wall click areas sit above the ducts so a wall can always be picked, and below the equipment
+    if (interactive) (state.walls || []).forEach((w) => {
+      if (interactive) el('line', { x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2, stroke: 'transparent', 'stroke-width': 1.8, 'data-wall': w.id, style: 'cursor:pointer' }, svg);
+      if (interactive && state.sel === w.id) el('line', { x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2, stroke: COL.sel, 'stroke-width': 0.35, 'stroke-dasharray': '0.5 0.4', 'pointer-events': 'none' }, svg);
+    });
     s.equip.forEach((e) => drawEquip(svg, e, a, interactive));
     if (interactive) {
       const dr = state.draft;
@@ -347,8 +352,8 @@
     const r = state.record; if (!r) return '';
     const drawn = Math.round(condArea());
     const bits = [r.county + ' record', r.sqft && `${r.sqft} sf heated`, r.beds && `${r.beds} bd`, r.baths && `${r.baths} ba`, r.yearBuilt && `built ${r.yearBuilt}`].filter(Boolean).join(' · ');
-    const off = r.sqft && Math.abs(drawn - r.sqft) / r.sqft > 0.05;
-    return `<p class="muted">${esc(bits)}${r.note ? ' · ' + esc(r.note) : ''}${off ? `<br>Drawn rooms total ${drawn} sf vs ${r.sqft} sf on record. <button id="btnScale">Scale rooms to record</button>` : ''}</p>`;
+    const off = r.sqft && !r.estimated && Math.abs(drawn - r.sqft) / r.sqft > 0.05;
+    return `<p class="muted">${esc(bits)}${r.note ? ' · ' + esc(r.note) : ''}${r.estimated ? ' · footprint is a rectangle estimated from this sq ft, not the real shape. Use Edit rooms to adjust.' : ''}${off ? `<br>Drawn rooms total ${drawn} sf vs ${r.sqft} sf on record. <button id="btnScale">Scale rooms to record</button>` : ''}</p>`;
   }
 
   function renderResults() {
@@ -382,6 +387,12 @@
     const s = scn();
     const e = s.equip.find((x) => x.id === state.sel);
     const d = s.ducts.find((x) => x.id === state.sel);
+    const wl = state.walls.find((x) => x.id === state.sel);
+    if (wl) {
+      body.className = '';
+      body.innerHTML = `<b>${wl.removed ? 'Removed wall' : 'Wall'}</b><p class="muted">${Math.round(Math.hypot(wl.x2 - wl.x1, wl.y2 - wl.y1) * 10) / 10} ft long</p><label><input data-wprop="removed" type="checkbox" ${wl.removed ? 'checked' : ''} style="width:auto"> Removed wall (drawn hatched)</label><button class="x" data-del>Delete wall</button>`;
+      return;
+    }
     if (d) {
       body.className = '';
       const auto = H.ductDia(H.analyze(s, state.rooms, state.cfg).ductFlow[d.id] || 0);
@@ -549,6 +560,7 @@
     const s = scn();
     if (state.tool === 'rooms' && state.selRoom) { state.rooms = state.rooms.filter((r) => r.id !== state.selRoom); state.selRoom = null; renderRooms(); renderAll(); return; }
     if (!state.sel) return;
+    if (state.walls.some((w) => w.id === state.sel)) { state.walls = state.walls.filter((w) => w.id !== state.sel); state.sel = null; renderWalls(); renderAll(); return; }
     s.equip = s.equip.filter((e) => e.id !== state.sel);
     s.ducts = s.ducts.filter((d) => d.id !== state.sel && s.equip.some((e) => e.id === d.a) && s.equip.some((e) => e.id === d.b));
     state.sel = null; renderAll();
@@ -591,7 +603,7 @@
     const svg = $('#plan');
     let drag = null;
     svg.addEventListener('pointerdown', (ev) => {
-      const g = ev.target.closest('[data-id]'), du = ev.target.closest('[data-duct]');
+      const g = ev.target.closest('[data-id]'), du = ev.target.closest('[data-duct]') || ev.target.closest('[data-wall]');
       const p = svgPoint(svg, ev);
       if (state.tool === 'rooms') {
         const sr = state.rooms.find((r) => r.id === state.selRoom), tol = Math.max(1, state.view.w / 45);
@@ -611,7 +623,7 @@
         if (state.tool !== 'select') { startTrace(p, ev); ev.preventDefault(); return; }
         const e = scn().equip.find((x) => x.id === id);
         state.sel = id; drag = { kind: 'eq', e, dx: p.x - e.x, dy: p.y - e.y }; renderAll();
-      } else if (du && state.tool === 'select') { state.sel = du.dataset.duct; renderAll(); }
+      } else if (du && state.tool === 'select') { state.sel = du.dataset.duct || du.dataset.wall; renderAll(); }
       else if (state.tool !== 'select' && !['supply', 'return', 'refrig'].includes(state.tool)) startTrace(p, ev);
       else { state.sel = null; state.pending = null; drag = { kind: 'pan', sx: ev.clientX, sy: ev.clientY, v: { ...state.view } }; renderProps(); }
       ev.preventDefault();
@@ -753,6 +765,7 @@
       state.walls = state.walls.filter((w) => w.id !== e.target.closest('[data-wall]').dataset.wall); renderWalls(); renderAll();
     });
     $('#btnAddRoom').onclick = () => { const v = state.view || { x: 0, y: 0, w: 60, h: 40 }, nr = { id: uid('r'), name: 'Room ' + (state.rooms.length + 1), x: snap(v.x + v.w / 2 - 6), y: snap(v.y + v.h / 2 - 6), w: 12, h: 12, ceiling: 8 }; state.rooms.push(nr); state.selRoom = nr.id; state.generated = false; state.tool = 'rooms'; renderRooms(); renderAll(); };
+    $('#btnRectSqft').onclick = () => { const sq = num($('#rectSqft').value, 0); if (!(sq >= 300)) return setStatus('Enter the living square footage (300 or more).'); const e = L.estimateFootprint(sq, 1); setFootprintAndRooms(L.rectFootprint(e.w, e.d), Math.max(1, num($('#beds').value, 3)), Math.max(1, num($('#baths').value, 2))); setStatus(`Built a ${e.w} x ${e.d} ft rectangle from ${sq} sq ft. Use Edit rooms to adjust.`); };
     $('#btnRect').onclick = () => setFootprintAndRooms(L.rectFootprint(num($('#rectW').value, 54), num($('#rectD').value, 36)), Math.max(1, num($('#beds').value, 3)), Math.max(1, num($('#baths').value, 2)));
 
     $('#parcel').oninput = (e) => { state.parcel = e.target.value; save(); };
@@ -791,9 +804,13 @@
           if (state.record.beds) $('#beds').value = state.record.beds;
           if (state.record.baths) $('#baths').value = Math.max(1, Math.round(state.record.baths));
         }
-        if (r.footprint && (state.generated || !state.rooms.length)) { setFootprintAndRooms(r.footprint, num($('#beds').value, 3), num($('#baths').value, 2)); }
-        else { if (r.footprint) r.notes.push('Existing rooms kept (traced or example). Use Blank plan to regenerate from the outline.'); renderAll(); }
-        setStatus((r.footprint ? 'Building outline loaded. ' : 'No outline, use the rectangle option. ') + r.notes.join(' '));
+        let fp = r.footprint, est = false;
+        if (!fp && state.record && state.record.sqft) { const e = L.estimateFootprint(state.record.sqft, state.record.stories); fp = L.rectFootprint(e.w, e.d); est = true; }
+        const replace = state.generated || !state.rooms.length;
+        if (fp && replace) { setFootprintAndRooms(fp, num($('#beds').value, 3), num($('#baths').value, 2)); if (est && state.record) { state.record.estimated = true; renderAll(); } }
+        else { if (fp) r.notes.push('Existing rooms kept (traced or example). Use Blank plan to regenerate.'); renderAll(); }
+        if (!fp) { $('#rectW').closest('details').open = true; if (state.record && state.record.sqft) $('#rectSqft').value = state.record.sqft; }
+        setStatus((r.footprint ? 'Building outline loaded. ' : est ? 'Outline unavailable, so rooms use a rectangle estimated from the record sq ft. ' : 'No outline. Enter living sq ft (or width and depth) below and build the footprint. ') + r.notes.join(' '));
       } catch (e) { setStatus('Lookup failed (' + e.message + '). Address and county lookups need direct internet access, which some hosted pages block. Open the downloaded index.html, or draw a rectangle footprint.'); }
       $('#btnLookup').disabled = false;
     };
@@ -811,6 +828,7 @@
       state.rooms = state.rooms.filter((r) => r.id !== e.target.closest('[data-room]').dataset.room); renderRooms(); renderAll();
     });
     $('#propBody').addEventListener('input', (e) => {
+      if (e.target.dataset.wprop) { const wl = state.walls.find((x) => x.id === state.sel); if (wl) { wl.removed = e.target.checked; renderWalls(); renderAll(); } return; }
       const dk = e.target.dataset.dk;
       if (dk) {
         const du = scn().ducts.find((x) => x.id === state.sel); if (!du) return;
