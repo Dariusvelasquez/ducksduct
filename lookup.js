@@ -35,7 +35,8 @@
     const cs = Math.cos(-ang), sn = Math.sin(-ang);
     pts = pts.map((p) => ({ x: p.x * cs - p.y * sn, y: p.x * sn + p.y * cs }));
     const mx = Math.min(...pts.map((p) => p.x)), my = Math.min(...pts.map((p) => p.y));
-    return pts.map((p) => ({ x: +(p.x - mx).toFixed(1), y: +(p.y - my).toFixed(1) }));
+    // geo records how the plan sits on the map (see geo.js)
+    return { pts: pts.map((p) => ({ x: +(p.x - mx).toFixed(1), y: +(p.y - my).toFixed(1) })), geo: { lat0, lon0, ang, mx, my, s: 1 } };
   }
 
   async function overpass(query) {
@@ -59,7 +60,8 @@
     const here = { lat, lon };
     const hit = rings.find((r) => pointInPoly(here, r)) || rings[0];
     const center = { lat: hit.reduce((t, c) => t + c.lat, 0) / hit.length, lon: hit.reduce((t, c) => t + c.lon, 0) / hit.length };
-    return { pts: toFeet(hit), center };
+    const f = toFeet(hit);
+    return { pts: f.pts, center, geo: f.geo };
   }
 
   /* ---- Public parcel records (Tampa Bay counties) ---- */
@@ -175,7 +177,7 @@
     out.lat = g.lat; out.lon = g.lon; out.display = g.display;
     say('Fetching building outline...');
     let pt = { lat: g.lat, lon: g.lon };
-    try { const f = await footprint(g.lat, g.lon); out.footprint = f.pts; pt = f.center; } catch (e) { out.notes.push('Building outline not available right now (' + e.message + ').'); }
+    try { const f = await footprint(g.lat, g.lon); out.footprint = f.pts; out.geo = f.geo; pt = f.center; } catch (e) { out.notes.push('Building outline not available right now (' + e.message + ').'); }
     say('Fetching county parcel record...');
     try {
       out.record = await countyParcel(pt.lat, pt.lon, address);

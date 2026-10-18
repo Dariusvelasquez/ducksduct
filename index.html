@@ -45,6 +45,13 @@
         <input id="token" type="password" placeholder="Regrid API token">
         <small>Only needed outside Hillsborough, Pinellas and Sarasota. Stored only in this browser.</small>
       </details>
+      <details open><summary>Map</summary>
+        <label><input type="checkbox" id="mapOn" style="width:auto"> Show the map under the plan</label>
+        <label>Map opacity<input id="mapOp" type="range" min="20" max="100" value="90"></label>
+        <div class="row"><label>Rotate map (deg)<input id="mapRot" type="number" step="1" value="0"></label><button id="btnMoveMap">Align map</button></div>
+        <button id="btnGeo">Export GeoJSON</button>
+        <small id="mapNote"></small>
+      </details>
       <details><summary>No outline found? Draw a rectangle</summary>
         <div class="row"><label>Width ft<input id="rectW" type="number" value="54"></label><label>Depth ft<input id="rectD" type="number" value="36"></label></div>
         <div class="row"><label>Beds<input id="beds" type="number" value="3"></label><label>Baths<input id="baths" type="number" value="2"></label></div>
@@ -156,6 +163,7 @@
 <script src="config.js"></script>
 <script src="hvac.js"></script>
 <script src="layout.js"></script>
+<script src="geo.js"></script>
 <script src="detect.js"></script>
 <script src="lookup.js"></script>
 <script src="app.js"></script>

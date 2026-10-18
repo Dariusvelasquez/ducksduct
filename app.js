@@ -10,6 +10,7 @@
     defaults: Object.assign({ btuPerSqft: 30, theme: 'paper' }, BR.defaults),
     features: Object.assign({ sample: true, lookup: true, print: true }, BR.features),
     storageKey: BR.storageKey || 'ductlayout.v2', poweredBy: BR.poweredBy || '',
+    map: Object.assign({ tileUrl: '', attribution: '', maxZoom: 19 }, BR.map),
   };
   const KEY = BX.storageKey;
   const THEMES = {
@@ -29,7 +30,7 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, geo: null, mapOn: false, mapOp: 0.9, point: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   // In-page replacement for confirm()/prompt(), which hosted pages cannot show.
@@ -52,6 +53,45 @@
     return false;
   }
   const scn = () => state.scenarios[state.active];
+
+  /* ---------- map under the plan ---------- */
+  const mapShown = () => !!(state.mapOn && state.geo && BX.map.tileUrl);
+  const polyAreaFt2 = (p) => Math.abs(p.reduce((s, a, i) => { const b = p[(i + 1) % p.length]; return s + a.x * b.y - b.x * a.y; }, 0)) / 2;
+  function drawMap(svg, v) {
+    if (!mapShown()) return;
+    const tiles = Geo.tilesFor(state.geo, v, svg.getBoundingClientRect().width || 800, { url: BX.map.tileUrl, maxZoom: BX.map.maxZoom });
+    tiles.forEach((t) => el('image', { href: t.url, x: 0, y: 0, width: 1, height: 1, transform: `matrix(${t.m.join(' ')})`, preserveAspectRatio: 'none', opacity: state.mapOp, 'pointer-events': 'none' }, svg));
+  }
+  // Put the plan on the map: its centre sits on the geocoded address point, no rotation. A hand-drawn or estimated outline
+  // is only approximately placed, so Align map and Rotate map are there to line it up.
+  function anchorMap() {
+    const pt = state.point; if (!pt || !state.footprint.length) return;
+    const xs = state.footprint.map((p) => p.x), ys = state.footprint.map((p) => p.y);
+    state.geo = { lat0: pt.lat, lon0: pt.lon, ang: 0, mx: -(Math.min(...xs) + Math.max(...xs)) / 2, my: -(Math.min(...ys) + Math.max(...ys)) / 2, s: 1, dx: 0, dy: 0, rot: 0 };
+    state.mapOn = !!BX.map.tileUrl;
+  }
+  let mapTimer = null;
+  const mapSoon = () => { if (!mapShown()) return; clearTimeout(mapTimer); mapTimer = setTimeout(refreshLight, 220); };   // reload tiles after panning or zooming
+  function renderMapUI() {
+    const has = !!state.geo && !!BX.map.tileUrl;
+    $('#mapOn').checked = !!state.mapOn; $('#mapOp').value = Math.round(state.mapOp * 100); $('#mapRot').value = state.geo ? state.geo.rot || 0 : 0;
+    ['mapOn', 'mapOp', 'mapRot', 'btnMoveMap'].forEach((id) => ($('#' + id).disabled = !has)); $('#btnGeo').disabled = !state.geo;
+    $('#mapNote').textContent = !BX.map.tileUrl ? 'No map provider is set in config.js.' : !state.geo ? 'Look up an address to place the plan on the map.' : '';
+  }
+  function downloadText(name, text, type) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function geoJSON() {
+    const g = state.geo; if (!g) return null;
+    const ll = (p) => { const q = Geo.toGeo(g, p.x, p.y); return [+q.lon.toFixed(7), +q.lat.toFixed(7)]; };
+    const ring = (pts) => { const r = pts.map(ll); r.push(r[0]); return [r]; };
+    const feats = [];
+    if (state.footprint.length > 2) feats.push({ type: 'Feature', properties: { kind: 'building', sqft: Math.round(polyAreaFt2(state.footprint)) }, geometry: { type: 'Polygon', coordinates: ring(state.footprint) } });
+    state.rooms.forEach((r) => feats.push({ type: 'Feature', properties: { kind: 'room', name: r.name, sqft: Math.round(r.w * r.h), noAC: !!r.noAC }, geometry: { type: 'Polygon', coordinates: ring([{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }]) } }));
+    scn().equip.forEach((e) => feats.push({ type: 'Feature', properties: { kind: 'equipment', type: e.type, label: e.label || '', tons: e.tons || null, btu: e.btu || null }, geometry: { type: 'Point', coordinates: ll(e) } }));
+    return { type: 'FeatureCollection', properties: { address: state.address || '', parcel: state.parcel || '' }, features: feats };
+  }
 
   /* ---------- selection actions ---------- */
   function rotateSel() { const e = scn().equip.find((x) => x.id === state.sel); if (!e) return; e.rot = ((e.rot || 0) + 90) % 360; renderAll(); }
@@ -88,8 +128,8 @@
 
   /* ---------- jobs library, export / import ---------- */
   const JOBS_KEY = KEY + '.jobs';
-  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated'];
-  const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record'];
+  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated', 'geo', 'mapOn', 'point'];
+  const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'geo', 'mapOn'];
   const sig = () => JSON.stringify(SIG.map((k) => state[k]));
   const hasWork = () => state.rooms.length > 0 || ['existing', 'proposed'].some((k) => state.scenarios[k].equip.length > 0);
   const isDirty = () => hasWork() && sig() !== state.savedSig;
@@ -101,14 +141,16 @@
     if (!d.rooms.every((r) => r && fin(r.x) && fin(r.y) && fin(r.w) && fin(r.h))) return false;
     return ['existing', 'proposed'].every((k) => { const s = d.scenarios[k]; return s && Array.isArray(s.equip) && Array.isArray(s.ducts) && s.equip.every((e) => e && fin(e.x) && fin(e.y) && typeof e.type === 'string') && s.ducts.every((x) => x && typeof x.kind === 'string'); });
   }
+  const validGeo = (g) => !!g && ['lat0', 'lon0', 'ang', 'mx', 'my', 's'].every((k) => typeof g[k] === 'number' && isFinite(g[k])) && Math.abs(g.lat0) <= 90 && Math.abs(g.lon0) <= 180;
   function resetJob() {
-    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
+    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, geo: null, mapOn: false, point: null, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
     ['jobName', 'lsSqft', 'lsBeds', 'lsBaths'].forEach((i) => { $('#' + i).value = ''; });
   }
   function applyJob(d) {
     Object.assign(state, { address: '', parcel: '', model: '', footprint: [], rooms: [], walls: [], listing: {}, record: null, generated: false, curTons: 5, active: 'existing',
-      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft } });
+      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, geo: null, mapOn: false, point: null });
     CORE.forEach((k) => { if (d[k] !== undefined && d[k] !== null) state[k] = d[k]; });
+    if (!validGeo(state.geo)) { state.geo = null; state.mapOn = false; }
     state.underlay = d.underlay && typeof d.underlay.url === 'string' && /^data:image\//.test(d.underlay.url) ? d.underlay : null;
     Object.assign(state, { sel: null, pending: null, selRoom: null, tool: 'select', draft: null, calib: [], view: null });
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
@@ -293,6 +335,7 @@
     el('path', { d: 'M0 0V1.2', stroke: COL.line, 'stroke-opacity': 0.3, 'stroke-width': 0.2 }, hat);
     el('rect', { x: v.x - 500, y: v.y - 500, width: v.w + 1000, height: v.h + 1000, fill: `url(#g${svg.id})`, 'data-bg': 1 }, svg);
 
+    drawMap(svg, v);
     const U = state.underlay;
     if (interactive && U && U.show) el('image', { href: U.url, x: U.x, y: U.y, width: U.w, height: U.h, opacity: U.op, preserveAspectRatio: 'none', 'pointer-events': 'none' }, svg);
     if (state.footprint.length) el('path', { d: 'M' + state.footprint.map((p) => `${p.x} ${p.y}`).join('L') + 'Z', fill: 'none', stroke: COL.line, 'stroke-width': 0.8, 'stroke-linejoin': 'miter', 'pointer-events': 'none' }, svg);
@@ -386,6 +429,7 @@
     }
     label(svg, v.x + 1.5, v.y + v.h * 0.07, key === 'proposed' ? 'After' : 'Before', { size: Math.max(2.2, v.h * 0.06), bold: true, anchor: 'start', fill: COL.warn });
     if (state.address) label(svg, v.x + v.w - 1.5, v.y + v.h - 1.5, state.address.split(',').slice(0, 2).join(','), { size: Math.max(1.4, v.h * 0.03), bold: true, anchor: 'end' });
+    if (mapShown()) label(svg, v.x + 1, v.y + v.h - 0.8, BX.map.attribution || '', { size: 0.8, anchor: 'start' });
     return a;
   }
 
@@ -435,6 +479,7 @@
     state.footprint.forEach((q) => { q.x = sc(q.x); q.y = sc(q.y); });
     state.walls.forEach((w) => { w.x1 = sc(w.x1); w.y1 = sc(w.y1); w.x2 = sc(w.x2); w.y2 = sc(w.y2); });
     if (state.underlay) { const u = state.underlay; u.x *= f; u.y *= f; u.w *= f; u.h *= f; }   // keep the image aligned with the drawing
+    if (state.geo) { state.geo.s *= f; state.geo.dx = (state.geo.dx || 0) * f; state.geo.dy = (state.geo.dy || 0) * f; }
     ['existing', 'proposed'].forEach((k) => state.scenarios[k].equip.forEach((e) => { e.x = sc(e.x); e.y = sc(e.y); }));
     fit(); renderRooms(); renderWalls(); renderAll();
   }
@@ -479,7 +524,8 @@
 
   function renderXcheck() {
     const drawn = Math.round(condArea()), r = state.record || {}, l = state.listing || {};
-    const rows = [['Drawn rooms (A/C)', drawn, null], [(r.county || 'County') + ' record', r.sqft, 'rec'], ['Listing', l.sqft, 'lst']].filter((x) => x[1]);
+    const fpA = state.footprint.length > 2 ? Math.round(polyAreaFt2(state.footprint)) : 0;
+    const rows = [['Drawn rooms (A/C)', drawn, null], ['Footprint outline', fpA, null], [(r.county || 'County') + ' record', r.sqft, 'rec'], ['Listing', l.sqft, 'lst']].filter((x) => x[1]);
     let h = '<table><tr><th>Source</th><th>sq ft</th><th>vs drawn</th><th></th></tr>' + rows.map(([n, v, k]) => {
       const d = drawn ? (v - drawn) / drawn : 0, cls = k && Math.abs(d) > 0.1 ? 'warn' : '';
       return `<tr><td>${esc(n)}</td><td>${Math.round(v)}</td><td class="${cls}">${k ? (d >= 0 ? '+' : '') + Math.round(d * 100) + '%' : ''}</td><td>${k ? `<button data-useq="${v}">Scale</button>` : ''}</td></tr>`;
@@ -501,7 +547,7 @@
   function renderAll() {
     document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
-    renderResults(); renderProps(); renderXcheck(); renderJobs();
+    renderResults(); renderProps(); renderXcheck(); renderJobs(); renderMapUI();
     if (!restoring) commitHist();   // a finished action (drop, rotate, delete, end of a drag) is its own undo step
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
     document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
@@ -561,6 +607,7 @@
     const isRect = fp.length === 4 && new Set(fp.map((p) => p.x)).size === 2 && new Set(fp.map((p) => p.y)).size === 2;
     state.footprint = isRect ? home.footprint.map((p) => ({ x: +(p.x + minX).toFixed(1), y: +(p.y + minY).toFixed(1) })) : fp;
     state.rooms = home.rooms.map((r) => ({ id: uid('r'), ceiling: 8, ...r, x: +(r.x + minX).toFixed(1), y: +(r.y + minY).toFixed(1) }));
+    anchorMap();   // a rectangle built after an address lookup sits on that address
     autoLayout('existing', { tons: state.curTons, splitters: true, perBranch: 4 });
     autoLayout('proposed', { tons: Math.max(1.5, state.curTons - 1), splitters: true, perBranch: 3 });
     fit(); renderRooms(); renderWalls(); renderAll();
@@ -731,6 +778,7 @@
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
         state.view = { x: p0.x - (p0.x - v0.x) * ff - (mx - pinch.m0.x) * k, y: p0.y - (p0.y - v0.y) * ff - (my - pinch.m0.y) * k, w, h: v0.h * ff };
         svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
+        mapSoon();
         return;
       }
       if (!drag) return;
@@ -740,11 +788,13 @@
       else if (drag.kind === 'eq') { const p = svgPoint(svg, ev); drag.e.x = snap(p.x - drag.dx); drag.e.y = snap(p.y - drag.dy); refreshLight(); }
       else if (drag.kind === 'room') { const p = svgPoint(svg, ev), x = snap(p.x), y = snap(p.y); state.draft = { kind: 'room', x: Math.min(drag.x0, x), y: Math.min(drag.y0, y), w: Math.abs(x - drag.x0), h: Math.abs(y - drag.y0) }; refreshLight(); }
       else if (drag.kind === 'wall') { const p = svgPoint(svg, ev); let x = snap(p.x), y = snap(p.y); if (Math.abs(x - drag.x0) >= Math.abs(y - drag.y0)) y = drag.y0; else x = drag.x0; state.draft = { kind: 'wall', x1: drag.x0, y1: drag.y0, x2: x, y2: y }; refreshLight(); }
+      else if (drag.kind === 'map') { const p = svgPoint(svg, ev); state.geo.dx = drag.dx + (p.x - drag.px); state.geo.dy = drag.dy + (p.y - drag.py); refreshLight(); }
       else if (drag.kind === 'img') { const p = svgPoint(svg, ev), u = state.underlay; u.x = drag.ux + (p.x - drag.px); u.y = drag.uy + (p.y - drag.py); refreshLight(); }
       else if (drag.kind === 'pan') {
         const r = svg.getBoundingClientRect(), k = Math.max(drag.v.w / r.width, drag.v.h / r.height);
         state.view = { ...drag.v, x: drag.v.x - (ev.clientX - drag.sx) * k, y: drag.v.y - (ev.clientY - drag.sy) * k };
         svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
+        mapSoon();
       }
     });
     const endPointer = (ev) => { touches.delete(ev.pointerId); if (touches.size < 2) pinch = null; };
@@ -764,6 +814,7 @@
     // Tracing tools: room/wall start a drag, moveimg drags the underlay, calib collects two points.
     function startTrace(p) {
       if (state.tool === 'room' || state.tool === 'wall') drag = { kind: state.tool, x0: snap(p.x), y0: snap(p.y) };
+      else if (state.tool === 'movemap' && state.geo) drag = { kind: 'map', px: p.x, py: p.y, dx: state.geo.dx || 0, dy: state.geo.dy || 0 };
       else if (state.tool === 'moveimg' && state.underlay) drag = { kind: 'img', px: p.x, py: p.y, ux: state.underlay.x, uy: state.underlay.y };
       else if (state.tool === 'calib' && state.underlay) {
         state.calib.push({ x: p.x, y: p.y });
@@ -784,6 +835,7 @@
       const p = svgPoint(svg, ev), f = ev.deltaY > 0 ? 1.12 : 1 / 1.12, v = state.view;
       state.view = { x: p.x - (p.x - v.x) * f, y: p.y - (p.y - v.y) * f, w: v.w * f, h: v.h * f };
       svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
+      mapSoon();
     }, { passive: false });
     svg.addEventListener('dblclick', (ev) => {   // double-click a bend handle to remove the bend
       const vh = ev.target.closest('[data-via]'); if (!vh) return;
@@ -841,6 +893,11 @@
       fr.readAsDataURL(f);
     };
     $('#btnDetect').onclick = detectRooms;
+    $('#mapOn').onchange = (e) => { state.mapOn = e.target.checked; renderAll(); };
+    $('#mapOp').oninput = (e) => { state.mapOp = e.target.value / 100; refreshLight(); };
+    $('#mapRot').onchange = (e) => { if (state.geo) { state.geo.rot = num(e.target.value, 0); renderAll(); } };
+    $('#btnMoveMap').onclick = () => { if (!state.geo) return; state.tool = 'movemap'; $('#hint').textContent = 'Drag to slide the map until the plan lines up with the real building.'; renderAll(); };
+    $('#btnGeo').onclick = () => { const gj = geoJSON(); if (!gj) return setStatus('Look up an address first so the plan has a location.'); downloadText((state.address || 'plan').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.geojson', JSON.stringify(gj, null, 1), 'application/geo+json'); setStatus('Exported GeoJSON with the building, rooms and equipment.'); };
     $('#btnUndo').onclick = undo; $('#btnRedo').onclick = redo;
     document.querySelectorAll('#tabs button').forEach((b) => (b.onclick = () => { document.body.dataset.tab = b.dataset.tab; document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b)); refreshLight(); }));
     $('#btnCalib').onclick = () => { if (!state.underlay) return setStatus('Upload a floor plan image first.'); state.tool = 'calib'; state.calib = []; $('#hint').textContent = 'Click two points on a wall of known length, then enter the length in feet.'; renderAll(); };
@@ -922,6 +979,7 @@
         state.address = r.display || addr;
         if (r.parcelId) { state.parcel = r.parcelId; $('#parcel').value = r.parcelId; }
         state.record = r.record || null;
+        if (r.lat != null) state.point = { lat: r.lat, lon: r.lon };
         if (state.record) {
           if (state.record.beds) $('#beds').value = state.record.beds;
           if (state.record.baths) $('#baths').value = Math.max(1, Math.round(state.record.baths));
@@ -929,7 +987,12 @@
         let fp = r.footprint, est = false;
         if (!fp && state.record && state.record.sqft) { const e = L.estimateFootprint(state.record.sqft, state.record.stories); fp = L.rectFootprint(e.w, e.d); est = true; }
         const replace = state.generated || !state.rooms.length;
-        if (fp && replace) { setFootprintAndRooms(fp, num($('#beds').value, 3), num($('#baths').value, 2)); if (est && state.record) { state.record.estimated = true; renderAll(); } }
+        if (fp && replace) {
+          setFootprintAndRooms(fp, num($('#beds').value, 3), num($('#baths').value, 2));
+          if (r.footprint && r.geo) state.geo = r.geo; else anchorMap();     // a real outline carries its own position; an estimate sits on the address point
+          state.mapOn = !!state.geo && !!BX.map.tileUrl; fit(); renderAll();
+          if (est && state.record) { state.record.estimated = true; renderAll(); }
+        }
         else { if (fp) r.notes.push('Existing rooms kept (traced or example). Use Blank plan to regenerate.'); renderAll(); }
         if (!fp) { $('#rectW').closest('details').open = true; if (state.record && state.record.sqft) $('#rectSqft').value = state.record.sqft; }
         setStatus((r.footprint ? 'Building outline loaded. ' : est ? 'Outline unavailable, so rooms use a rectangle estimated from the record sq ft. ' : 'No outline. Enter living sq ft (or width and depth) below and build the footprint. ') + r.notes.join(' '));
