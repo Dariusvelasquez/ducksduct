@@ -25,6 +25,10 @@ Change `storageKey` per brand so two installs on one domain never share saved jo
 | `hvac.js` | Calculation engine (pure functions, unit tested) |
 | `layout.js` | Starting floor plan: a split-bedroom ranch scaled to the footprint (pure functions, unit tested). Edit the `BASE` and `OUTLINE` tables to change the default house. |
 | `lookup.js` | Address, building outline and parcel lookups |
+| `geo.js`, `sizing.js`, `exif.js`, `media.js`, `detect.js` | Map maths, sizing table / catalog / quote, photo GPS reader, photo storage (IndexedDB), floor-plan image detection |
+| `jobber.js`, `roomplan.js` | Jobber sync client, LiDAR scan import (see `docs/JOBBER.md`, `docs/ROOMPLAN.md`) |
+| `server/jobber-proxy/` | Optional sync server (mock works, live part to be completed) |
+| `sw.js`, `manifest.webmanifest`, `assets/` | Installable app and offline support (generated into `dist/` by the build) |
 | `config.js` | White-label settings |
 | `tools/` | build, preview server, export |
 
@@ -47,6 +51,14 @@ The build adds a Content-Security-Policy that allows the app to contact only the
 
 **About the starting floor plan.** "Load example home", the rectangle option, "Build from sq ft" and the lookup fallback all place rooms with `layout.js`. It follows the common split-bedroom pattern (master suite at one end, secondary bedrooms and hall bath at the other, great room, kitchen and dining between, kitchen, laundry and baths sharing plumbing walls) with typical room sizes. It is a starting point to edit with the Edit rooms tool, not a survey of the real house. A real building outline from a lookup is kept as the outline, but the rooms are still the template scaled into its bounding box.
 
+**Map tiles.** `config.js` `map.tileUrl` is the picture source under the plan. The default is OpenStreetMap's public map, which has a usage policy and is meant for light use. For production use a provider you have an account with (Mapbox, MapTiler, Esri World Imagery, and so on), check its terms for caching and for saving images, and set `map.attribution`. The picture export needs the provider to allow cross-origin image requests.
+
+**Phones and offline.** The build writes a service worker. On https (or localhost) the app installs to the home screen and the app and any map tiles already viewed work with no signal. Saved jobs and photos live on the device. Lookups need signal. Updating: deploy a new build; the app picks it up the next time it is opened with a connection.
+
+**Sizing and prices.** The sizing table, catalog and prices in `config.js` are samples. Replace them with the company's before use, then turn on `features.showPrices` if prices should appear in the customer presentation.
+
+**Not built.** Live Jobber connection, the LiDAR scanning app, accounts and cloud sync, multi-story plans. See `docs/SPEC-COMPLIANCE.md`.
+
 ## 5. What the numbers are, and are not
 - Room load = area x BTU per sq ft (default 30), scaled for ceiling height and sun exposure. **This is a presentation estimate, not an ACCA Manual J.** Do not size equipment from it alone.
 - Airflow is 400 CFM per ton, split across outlets by damper weight. Duct diameter uses a fixed 700 fpm velocity, not Manual D friction-rate design.
@@ -55,7 +67,7 @@ The build adds a Content-Security-Policy that allows the app to contact only the
 The default disclaimer says this on every proposal. Keep wording at least this strong.
 
 ## 6. Tests
-`npm test` runs the calculation tests. Before each release also click through `docs/ACCEPTANCE-CHECKLIST.md`.
+`npm test` runs the unit tests (calculation, layout, detection, map, sizing, photo GPS, Jobber client and mock server, scan import). Before each release also click through `docs/ACCEPTANCE-CHECKLIST.md`.
 
 ## 7. Suggested next steps
 1. Real Manual J engine (or integration with the company's current load software).

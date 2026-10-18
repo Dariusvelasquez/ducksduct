@@ -19,8 +19,12 @@ window.BRAND = {
     sample: true,                     // "Load example home" button (an imaginary house)
     lookup: true,                     // address / county parcel lookup (needs internet access to the data servers)
     print: true,                      // Print / save PDF button in the presentation
+    jobber: true,                     // Jobber panel (send notes and photos to a Jobber job)
+    scan: true,                       // LiDAR room-scan import panel
     showPrices: false,                // show the estimated price in the customer presentation (turn on only after the catalog holds real prices)
   },
+  // Jobber sync server (see docs/JOBBER.md). Leave proxyUrl empty to let each user type it in. Set features.jobber false to hide the panel.
+  jobber: { proxyUrl: '' },
   // Map under the plan. tileUrl is a standard {z}/{x}/{y} tile URL. The default is OpenStreetMap's public street map,
   // fine for trying things out; check its tile usage policy before relying on it. For satellite imagery use a provider
   // you have an account with, for example (check each provider's current terms and URL format):

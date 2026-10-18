@@ -100,6 +100,24 @@
       <label>Job notes<textarea id="jobNotes" rows="4" placeholder="Anything the plan doesn't show"></textarea></label>
     </section>
 
+    <section id="jobberSec">
+      <h2>Jobber</h2>
+      <div class="row"><label>Sync server address<input id="jbUrl" placeholder="https://your-proxy.example.com"></label></div>
+      <label>Access key<input id="jbKey" type="password"></label>
+      <div class="row"><label>Find a job<input id="jbQ" placeholder="client or address"></label><button id="btnJbFind">Search</button></div>
+      <div id="jbList"></div>
+      <div id="jbState" class="status"></div>
+      <div class="row"><button id="btnJbSend" class="primary">Send to Jobber</button><button id="btnJbCopy">Copy notes</button></div>
+      <small>Sends the notes, measurements, photos and a picture of the design to the chosen Jobber job. It needs the sync server set up by your administrator. <b>Copy notes</b> works without it: paste into the Jobber note yourself.</small>
+    </section>
+
+    <section id="scanSec">
+      <h2>Room scan (LiDAR)</h2>
+      <button id="btnScan">Import scan file</button>
+      <input type="file" id="scanFile" accept=".json,application/json" hidden>
+      <small id="scanNote">Imports walls from a scan made by the companion iPhone/iPad app. See the handoff notes. The scan is not required to use the app.</small>
+    </section>
+
     <section id="sizingSec">
       <h2>Sizing</h2>
       <label>Home age<select id="szEra"></select></label>
@@ -209,6 +227,8 @@
 <script src="exif.js"></script>
 <script src="media.js"></script>
 <script src="detect.js"></script>
+<script src="jobber.js"></script>
+<script src="roomplan.js"></script>
 <script src="lookup.js"></script>
 <script src="app.js"></script>
 </body>

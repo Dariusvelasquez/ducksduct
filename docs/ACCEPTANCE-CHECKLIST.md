@@ -20,6 +20,14 @@ Run on the deployed URL, on a laptop and on a tablet. Tick each item; note the d
 - [ ] Edit after opening: the label shows "unsaved changes". Press Load example home: it asks before replacing. Cancel keeps the work.
 - [ ] Save as new makes a second job; Copy and Delete (with confirmation) work.
 - [ ] Export file, Blank plan, Import file: the job is restored. Importing a random .json file is rejected without changing the work.
+- [ ] Map: after a lookup, Show the map under the plan; Align map and Rotate map line the outline up. Export GeoJSON downloads a file.
+- [ ] Sizing: choose home age and insulation; the suggested tonnage updates. Select the condenser: a catalog match is offered. The Parts and quote list changes live as equipment and ducts change.
+- [ ] Field capture on a real phone: Take photo stores GPS and time; Pin on plan; add a tape measurement and job notes. Reload: all still there.
+- [ ] Share picture makes a PNG (or opens the phone share sheet) with both layouts and the disclaimer.
+- [ ] Install on an Android phone (Install app) and an iPad (Add to Home Screen). Turn on airplane mode, open the app: saved job opens and edits.
+- [ ] Draw a few ducts with bend points; Undo and Redo step back and forward.
+- [ ] Jobber: Copy notes puts a readable summary on the clipboard. (If the sync server is set up: search, choose a job, Send to Jobber; the note and photos appear in Jobber.)
+- [ ] Import scan file with a sample file adds walls (see `docs/ROOMPLAN.md`).
 - [ ] `npm test` passes.
 
 Accepted by: ______________________  Date: ____________

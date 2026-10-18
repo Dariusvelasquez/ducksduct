@@ -8,7 +8,8 @@
     name: BR.name || 'HVAC Designer', logo: BR.logo || '', accent: BR.accent || '', company: BR.company || {},
     disclaimer: BR.disclaimer || 'Preliminary sizing estimate, not an ACCA Manual J load calculation.',
     defaults: Object.assign({ btuPerSqft: 30, theme: 'paper' }, BR.defaults),
-    features: Object.assign({ sample: true, lookup: true, print: true, showPrices: false }, BR.features),
+    features: Object.assign({ sample: true, lookup: true, print: true, showPrices: false, jobber: true, scan: true }, BR.features),
+    jobber: Object.assign({ proxyUrl: '' }, BR.jobber),
     storageKey: BR.storageKey || 'ductlayout.v2', poweredBy: BR.poweredBy || '',
     map: Object.assign({ tileUrl: '', attribution: '', maxZoom: 19 }, BR.map),
     sizing: BR.sizing || null, catalog: BR.catalog || null,
@@ -31,7 +32,7 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, photos: [], measures: [], notes: '', sizing: { era: BR.sizing ? BR.sizing.defaultEra : '', envelope: BR.sizing ? BR.sizing.defaultEnvelope : '', basis: 'auto' }, geo: null, mapOn: false, mapOp: 0.9, point: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, photos: [], measures: [], notes: '', jobber: null, sizing: { era: BR.sizing ? BR.sizing.defaultEra : '', envelope: BR.sizing ? BR.sizing.defaultEnvelope : '', basis: 'auto' }, geo: null, mapOn: false, mapOp: 0.9, point: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   // In-page replacement for confirm()/prompt(), which hosted pages cannot show.
@@ -260,6 +261,56 @@
     } catch (e) { setStatus('Could not make the picture: ' + e.message); }
   }
 
+  /* ---------- Jobber, room scan ---------- */
+  const JB_KEY = KEY + '.jobber';
+  const jbCfg = () => { try { return JSON.parse(localStorage.getItem(JB_KEY)) || {}; } catch (e) { return {}; } };
+  const jbSave = () => { try { localStorage.setItem(JB_KEY, JSON.stringify({ proxyUrl: $('#jbUrl').value.trim(), key: $('#jbKey').value })); } catch (e) { /* storage blocked */ } };
+  const jbSay = (t) => { $('#jbState').textContent = t; };
+  function renderJobber() {
+    const sel = state.jobber;
+    jbSay($('#jbState').dataset.busy ? $('#jbState').textContent : sel ? 'Linked to: ' + sel.title : 'No Jobber job chosen.');
+    $('#btnJbSend').disabled = !sel;
+  }
+  function designSummary() {
+    const sz = sizingNow(), systems = ['existing', 'proposed'].map((k) => {
+      const t = takeoff(k).a.total, q = BX.catalog && state.scenarios[k].equip.length ? quoteFor(k) : null;
+      return { name: k === 'proposed' ? 'Proposed system' : 'Existing system', installedTons: +t.installedTons.toFixed(1), requiredTons: +t.requiredTons.toFixed(1), pct: Math.round(t.oversize * 100), equipment: state.scenarios[k].equip.filter((e) => ['condenser', 'ahu', 'head'].includes(e.type)).map((e) => `${e.label || e.type}: ${e.type === 'head' ? (e.btu || 0) / 1000 + 'k BTU' : e.tons + ' ton'}`), total: BX.features.showPrices && q ? q.total : null };
+    });
+    const r = state.record;
+    return { address: state.address, parcel: state.parcel, record: r, sizing: sz && { sqft: sz.sqft, label: sz.label, btuPerSqft: state.cfg.btuPerSqft, tons: sz.tons, rounded: sz.rounded, low: sz.low, high: sz.high }, systems, measures: state.measures, photos: state.photos, notes: state.notes };
+  }
+  const b64 = async (blob) => (await blobToDataURL(blob)).split(',')[1];
+  async function sendToJobber() {
+    jbSave(); const cfg = jbCfg(); if (!state.jobber) return;
+    $('#jbState').dataset.busy = '1'; jbSay('Preparing photos and picture...'); $('#btnJbSend').disabled = true;
+    try {
+      const photos = [];
+      for (const p of state.photos) { const b = await Media.get(p.id); if (b) photos.push({ name: p.id + '.jpg', mime: b.type || 'image/jpeg', dataBase64: await b64(b), ts: p.ts, lat: p.lat, lon: p.lon, note: p.note }); }
+      let picture = null;
+      if (state.rooms.length || scn().equip.length) { const { canvas } = await composePicture(true); picture = { name: 'layout.png', mime: 'image/png', dataBase64: (canvas.toDataURL('image/png')).split(',')[1] }; }
+      jbSay('Sending...');
+      const r = await Jobber.sync(cfg, state.jobber.id, { note: Jobber.noteText(designSummary()), photos, picture, measurements: state.measures, design: { rooms: state.rooms, scenarios: state.scenarios } });
+      delete $('#jbState').dataset.busy; jbSay(`Sent to "${state.jobber.title}" (${r.attachments} attachment${r.attachments === 1 ? '' : 's'}).`);
+    } catch (e) { delete $('#jbState').dataset.busy; jbSay('Not sent: ' + e.message); }
+    $('#btnJbSend').disabled = !state.jobber;
+  }
+  async function findJobberJobs() {
+    jbSave(); jbSay('Searching...');
+    try {
+      const r = await Jobber.jobs(jbCfg(), $('#jbQ').value.trim()), box = $('#jbList');
+      box.innerHTML = r.jobs.length ? r.jobs.map((j) => `<div class="job"><span class="jn">${esc(j.title)}<small>${esc(j.client)} · ${esc(j.address)}</small></span><button data-jbpick="${esc(j.id)}" data-jbtitle="${esc(j.title + ' (' + j.client + ')')}">Use</button></div>`).join('') : '';
+      jbSay(r.jobs.length ? 'Choose a job.' : 'No matching jobs.');
+    } catch (e) { jbSay(e.message); }
+  }
+  function importScan(text) {
+    const r = RoomPlan.parse(text);
+    if (r.error) return ($('#scanNote').textContent = r.error);
+    const b = state.footprint.length ? { x: Math.min(...state.footprint.map((p) => p.x)), y: Math.min(...state.footprint.map((p) => p.y)) } : { x: 0, y: 0 };
+    r.walls.forEach((w) => state.walls.push({ id: uid('w'), x1: +(w.x1 + b.x).toFixed(1), y1: +(w.y1 + b.y).toFixed(1), x2: +(w.x2 + b.x).toFixed(1), y2: +(w.y2 + b.y).toFixed(1), removed: false }));
+    $('#scanNote').textContent = `Imported ${r.walls.length} walls (${r.width} x ${r.depth} ft)${r.skipped ? `, skipped ${r.skipped} it could not read` : ''}${r.openings ? `; ${r.openings} doors/windows in the file were not imported` : ''}. Check them against the room.`;
+    renderWalls(); renderAll(); fit();
+  }
+
   /* ---------- map under the plan ---------- */
   const mapShown = () => !!(state.mapOn && state.geo && BX.map.tileUrl);
   const polyAreaFt2 = (p) => Math.abs(p.reduce((s, a, i) => { const b = p[(i + 1) % p.length]; return s + a.x * b.y - b.x * a.y; }, 0)) / 2;
@@ -335,7 +386,7 @@
 
   /* ---------- jobs library, export / import ---------- */
   const JOBS_KEY = KEY + '.jobs';
-  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated', 'geo', 'mapOn', 'point', 'sizing', 'photos', 'measures', 'notes'];
+  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated', 'geo', 'mapOn', 'point', 'sizing', 'photos', 'measures', 'notes', 'jobber'];
   const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'geo', 'mapOn', 'sizing', 'photos', 'measures', 'notes'];
   const sig = () => JSON.stringify(SIG.map((k) => state[k]));
   const hasWork = () => state.rooms.length > 0 || ['existing', 'proposed'].some((k) => state.scenarios[k].equip.length > 0);
@@ -350,15 +401,16 @@
   }
   const validGeo = (g) => !!g && ['lat0', 'lon0', 'ang', 'mx', 'my', 's'].every((k) => typeof g[k] === 'number' && isFinite(g[k])) && Math.abs(g.lat0) <= 90 && Math.abs(g.lon0) <= 180;
   function resetJob() {
-    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, geo: null, mapOn: false, point: null, photos: [], measures: [], notes: '', sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' }, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
+    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, geo: null, mapOn: false, point: null, photos: [], measures: [], notes: '', jobber: null, sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' }, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
     ['jobName', 'lsSqft', 'lsBeds', 'lsBaths'].forEach((i) => { $('#' + i).value = ''; });
   }
   function applyJob(d) {
     Object.assign(state, { address: '', parcel: '', model: '', footprint: [], rooms: [], walls: [], listing: {}, record: null, generated: false, curTons: 5, active: 'existing',
-      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, geo: null, mapOn: false, point: null, photos: [], measures: [], notes: '', sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' } });
+      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, geo: null, mapOn: false, point: null, photos: [], measures: [], notes: '', jobber: null, sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' } });
     CORE.forEach((k) => { if (d[k] !== undefined && d[k] !== null) state[k] = d[k]; });
     if (!validGeo(state.geo)) { state.geo = null; state.mapOn = false; }
     state.photos = cleanPhotos(state.photos); state.measures = cleanMeasures(state.measures); state.notes = typeof state.notes === 'string' ? state.notes.slice(0, 5000) : '';
+    state.jobber = state.jobber && typeof state.jobber.id === 'string' ? { id: state.jobber.id.slice(0, 80), title: String(state.jobber.title || '').slice(0, 120) } : null;
     state.underlay = d.underlay && typeof d.underlay.url === 'string' && /^data:image\//.test(d.underlay.url) ? d.underlay : null;
     Object.assign(state, { sel: null, pending: null, selRoom: null, tool: 'select', draft: null, calib: [], view: null });
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
@@ -775,7 +827,7 @@
   function renderAll() {
     document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
-    renderResults(); renderProps(); renderXcheck(); renderJobs(); renderMapUI(); renderSizing(); renderQuote(); renderField();
+    renderResults(); renderProps(); renderXcheck(); renderJobs(); renderMapUI(); renderSizing(); renderQuote(); renderField(); renderJobber();
     if (!restoring) commitHist();   // a finished action (drop, rotate, delete, end of a drag) is its own undo step
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
     document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
@@ -1152,6 +1204,15 @@
     };
     $('#measureList').addEventListener('click', (e) => { if (!e.target.matches('[data-msdel]')) return; const id = e.target.closest('[data-ms]').dataset.ms; state.measures = state.measures.filter((m) => m.id !== id); renderAll(); });
     $('#jobNotes').oninput = (e) => { state.notes = e.target.value.slice(0, 5000); refreshLight(); };
+    if (!BX.features.jobber) $('#jobberSec').hidden = true; if (!BX.features.scan) $('#scanSec').hidden = true;
+    { const c = jbCfg(); $('#jbUrl').value = BX.jobber.proxyUrl || c.proxyUrl || ''; $('#jbKey').value = c.key || ''; }
+    if (!BX.jobber.proxyUrl) { ['jbUrl', 'jbQ', 'btnJbFind', 'btnJbSend'].forEach((i) => { const n = $('#' + i); (n.closest('label') || n).hidden = true; }); $('#jbList').hidden = true; if ($('#jbQ').parentNode.classList.contains('row')) $('#jbQ').parentNode.hidden = true; }
+    $('#btnJbFind').onclick = findJobberJobs; $('#btnJbSend').onclick = sendToJobber;
+    $('#jbUrl').onchange = $('#jbKey').onchange = jbSave;
+    $('#jbList').addEventListener('click', (e) => { if (!e.target.dataset.jbpick) return; state.jobber = { id: e.target.dataset.jbpick, title: e.target.dataset.jbtitle }; $('#jbList').innerHTML = ''; renderAll(); });
+    $('#btnJbCopy').onclick = () => { const t = Jobber.noteText(designSummary()); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => jbSay('Notes copied. Paste them into the Jobber job.'), () => { downloadText('jobber-notes.txt', t, 'text/plain'); jbSay('Could not copy, so the notes were saved as a file.'); }); };
+    $('#btnScan').onclick = () => $('#scanFile').click();
+    $('#scanFile').onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importScan(await f.text()); };
     fillSizingSelects();
     $('#szEra').onchange = (e) => { state.sizing.era = e.target.value; setFactorFromTable(); renderAll(); };
     $('#szEnv').onchange = (e) => { state.sizing.envelope = e.target.value; setFactorFromTable(); renderAll(); };

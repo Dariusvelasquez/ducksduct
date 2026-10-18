@@ -27,12 +27,15 @@ const connect = ['https://nominatim.openstreetmap.org', 'https://overpass-api.de
 // the map tile server named in config.js must be allowed to send images (and to be fetched when exporting a picture)
 let tileOrigin = '';
 try { if (brand.map && brand.map.tileUrl) tileOrigin = new URL(brand.map.tileUrl.replace(/\{[a-z]\}/g, '0')).origin; } catch (e) {}
-const csp = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${tileOrigin}; connect-src 'self' ${connect.concat(tileOrigin || []).join(' ')}; object-src 'none'; base-uri 'none'; form-action 'none'`;
+// the Jobber sync server (brand.jobber.proxyUrl in config.js) must be allowed too; with none set the Jobber panel is hidden
+let jobberOrigin = '';
+try { if (brand.jobber && brand.jobber.proxyUrl) jobberOrigin = new URL(brand.jobber.proxyUrl).origin; } catch (e) {}
+const csp = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${tileOrigin}; connect-src 'self' ${connect.concat(tileOrigin || [], jobberOrigin || []).join(' ')}; object-src 'none'; base-uri 'none'; form-action 'none'`;
 
 let html = read('index.html')
   .replace(/<title>.*?<\/title>/, `<title>${brand.name.replace(/[<>&]/g, '')}</title>\n<meta http-equiv="Content-Security-Policy" content="${csp}">`);
 
-const files = { 'style.css': read('style.css'), 'hvac.js': read('hvac.js'), 'layout.js': read('layout.js'), 'geo.js': read('geo.js'), 'sizing.js': read('sizing.js'), 'exif.js': read('exif.js'), 'media.js': read('media.js'), 'detect.js': read('detect.js'), 'lookup.js': read('lookup.js'), 'app.js': read('app.js'), 'config.js': config };
+const files = { 'style.css': read('style.css'), 'hvac.js': read('hvac.js'), 'layout.js': read('layout.js'), 'geo.js': read('geo.js'), 'sizing.js': read('sizing.js'), 'exif.js': read('exif.js'), 'media.js': read('media.js'), 'detect.js': read('detect.js'), 'jobber.js': read('jobber.js'), 'roomplan.js': read('roomplan.js'), 'lookup.js': read('lookup.js'), 'app.js': read('app.js'), 'config.js': config };
 fs.writeFileSync(path.join(dist, 'index.html'), html);
 for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dist, f), c);
 if (fs.existsSync(path.join(root, 'assets'))) fs.cpSync(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
@@ -47,7 +50,7 @@ fs.writeFileSync(path.join(dist, 'sw.js'), read('sw.js').replace('__BUILD__', Da
 
 if (args.has('--single')) {
   const body = html.match(/<body>([\s\S]*?)<script src="config.js">/)[1];
-  const js = ['config.js', 'hvac.js', 'layout.js', 'geo.js', 'sizing.js', 'exif.js', 'media.js', 'detect.js', 'lookup.js', 'app.js'].map((f) => files[f]).join('\n');
+  const js = ['config.js', 'hvac.js', 'layout.js', 'geo.js', 'sizing.js', 'exif.js', 'media.js', 'detect.js', 'jobber.js', 'roomplan.js', 'lookup.js', 'app.js'].map((f) => files[f]).join('\n');
   if (/<\/script/i.test(js)) throw new Error('inline script contains </script');
   fs.writeFileSync(path.join(dist, 'index.single.html'), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${brand.name}</title><style>${files['style.css']}</style></head><body>${body}<script>${js}</script></body></html>`);
 }
