@@ -3,7 +3,7 @@
 Run on the deployed URL, on a laptop and on a tablet. Tick each item; note the date and who tested.
 
 - [ ] Header shows the company name and logo; accent colour correct; browser tab title correct.
-- [ ] "Sample home" loads a plan with equipment, ducts and a results table.
+- [ ] "Load example home" loads a realistic split-bedroom house (master suite at one end, two bedrooms and a hall bath at the other, great room / kitchen / dining between) with equipment, ducts and a results table.
 - [ ] Drag the condenser, air handler, an outlet and an intake; ducts follow; results update.
 - [ ] Connect a new outlet with the Supply duct tool; airflow and duct size appear. Delete it with Del.
 - [ ] Add a splitter between the air handler and two outlets; airflow splits.

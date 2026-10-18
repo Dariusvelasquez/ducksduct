@@ -158,9 +158,10 @@
     return { parcelId: p.parcelnumb || p.parcelnumb_no_formatting || '', sqft: p.ll_bldg_footprint_sqft || p.ll_gisacre || '', raw: p };
   }
 
-  // Rough rectangle from living area when no real outline is available (about 1.4 : 1, rounded to 0.5 ft).
+  // Bounding box from living area when no real outline is available. The starting floor plan fills about 82% of its
+  // bounding box (see layout.js) and is about 1.7 : 1, so size the box to match. Rounded to 0.5 ft.
   function estimateFootprint(sqft, stories) {
-    const area = sqft / Math.max(1, stories || 1), w = Math.sqrt(area * 1.4), r = (v) => Math.round(v * 2) / 2;
+    const area = sqft / Math.max(1, stories || 1) / 0.825, w = Math.sqrt(area * 1.7), r = (v) => Math.round(v * 2) / 2;
     return { w: r(w), d: r(area / w) };
   }
 

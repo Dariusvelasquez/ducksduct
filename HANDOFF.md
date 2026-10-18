@@ -23,6 +23,7 @@ Change `storageKey` per brand so two installs on one domain never share saved jo
 | `index.html`, `style.css` | Layout and styling |
 | `app.js` | Drawing, drag-and-drop, tracing, auto layout, presentation, UI |
 | `hvac.js` | Calculation engine (pure functions, unit tested) |
+| `layout.js` | Starting floor plan: a split-bedroom ranch scaled to the footprint (pure functions, unit tested). Edit the `BASE` and `OUTLINE` tables to change the default house. |
 | `lookup.js` | Address, building outline and parcel lookups |
 | `config.js` | White-label settings |
 | `tools/` | build, preview server, export |
@@ -43,6 +44,8 @@ Change `storageKey` per brand so two installs on one domain never share saved jo
 | Regrid (optional) | Parcels outside these counties | User supplies their own token, stored in their browser. |
 
 The build adds a Content-Security-Policy that allows the app to contact only these hosts. If you add a data source, add its host to the `connect` list in `tools/build.js`.
+
+**About the starting floor plan.** "Load example home", the rectangle option, "Build from sq ft" and the lookup fallback all place rooms with `layout.js`. It follows the common split-bedroom pattern (master suite at one end, secondary bedrooms and hall bath at the other, great room, kitchen and dining between, kitchen, laundry and baths sharing plumbing walls) with typical room sizes. It is a starting point to edit with the Edit rooms tool, not a survey of the real house. A real building outline from a lookup is kept as the outline, but the rooms are still the template scaled into its bounding box.
 
 ## 5. What the numbers are, and are not
 - Room load = area x BTU per sq ft (default 30), scaled for ceiling height and sun exposure. **This is a presentation estimate, not an ACCA Manual J.** Do not size equipment from it alone.

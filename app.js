@@ -219,7 +219,7 @@
       label(grp, 0, h / 2 + 1, `${fmt(info.cfm || 0)} CFM`, { size: 0.75, fill: COL.return });
 } else if (e.type === 'splitter') {
       el('path', { d: `M${-w / 2} ${-h / 2}L${w / 2} 0L${-w / 2} ${h / 2}Z`, fill: COL.bg, stroke: sel ? COL.sel : COL.supply, 'stroke-width': 0.3 }, grp);
-      label(grp, 0, h / 2 + 1, 'PLENUM / SPLIT', { size: 0.75, fill: COL.supply });
+      label(grp, 0, h / 2 + 1, 'SPLIT', { size: 0.75, fill: COL.supply });
 } else if (e.type === 'head') {
       box(); for (let i = 0; i < 3; i++) el('path', { d: `M${-w / 2 + 0.3} ${-0.2 + i * 0.25}H${w / 2 - 0.3}`, stroke: COL.supply, 'stroke-width': 0.1 }, grp);
       label(grp, 0, -h / 2 - 0.5, `${e.label || 'MINI-SPLIT'} · OUTLET ${Math.round((e.btu || 0) / 1000)}k BTU`, { size: 0.9, fill: COL.supply });
@@ -260,10 +260,16 @@
       const row = a.rooms.find((x) => x.id === r.id);
       const cls = row ? (row.pct < 0.85 ? COL.bad : row.pct > 1.25 ? COL.warn : COL.ok) : COL.line;
       el('rect', { x: r.x, y: r.y, width: r.w, height: r.h, fill: r.noAC ? `url(#h${svg.id})` : 'none', stroke: COL.line, 'stroke-opacity': r.noAC ? 0.9 : 0.55, 'stroke-width': r.noAC ? 0.5 : 0.15, 'stroke-dasharray': r.noAC ? '' : '0.6 0.4', 'pointer-events': 'none' }, svg);
-      label(svg, r.x + r.w / 2, r.y + 1.7, r.name.toUpperCase(), { size: 1.05, bold: true });
+      // Text is fitted to the room: small rooms (closets, hall, linen) get a shrunken name only; larger rooms also get
+      // their detail lines along the bottom, clear of the outlet that sits in the middle.
+      const big = r.w >= 9 && r.h >= 9, nm = r.name.toUpperCase();
+      const nsz = Math.max(0.55, Math.min(1.05, (r.w - 0.6) / (nm.length * 0.62)));
+      label(svg, r.x + r.w / 2, big ? r.y + 1.7 : r.y + r.h / 2 + nsz * 0.35, nm, { size: nsz, bold: true });
       if (r.noAC) { label(svg, r.x + r.w / 2, r.y + r.h / 2 + 1, 'NO A/C', { size: Math.min(4, r.w / 7), bold: true }); return; }
-      label(svg, r.x + r.w / 2, r.y + 3, `${Math.round(H.roomSqft(r))} sf · need ${(row ? row.required / 1000 : 0).toFixed(1)}k`, { size: 0.85 });
-      if (row) label(svg, r.x + r.w / 2, r.y + 4.2, `${Math.round(row.pct * 100)}% served`, { size: 0.85, fill: cls });
+      if (big) {
+        label(svg, r.x + r.w / 2, r.y + r.h - 2.5, `${Math.round(H.roomSqft(r))} sf · need ${(row ? row.required / 1000 : 0).toFixed(1)}k`, { size: 0.85 });
+        if (row) label(svg, r.x + r.w / 2, r.y + r.h - 1.2, `${Math.round(row.pct * 100)}% served`, { size: 0.85, fill: cls });
+      }
     });
 
     if (interactive && state.tool === 'rooms') {
@@ -453,53 +459,40 @@
   function refreshLight() { renderPlan($('#plan'), state.active, true); renderResults(); renderJobState(); save(); }
 
   /* ---------- building rooms and layouts ---------- */
-  function autoRooms(w, d, beds, baths) {
-    if (d > w * 1.1) return autoRooms(d, w, beds, baths).map((r) => ({ ...r, x: r.y, y: r.x, w: r.h, h: r.w })); // tall footprint: same layout turned 90 degrees
-    const hallH = Math.min(6, d * 0.16), topH = (d - hallH) * 0.45, botH = d - hallH - topH;
-    const rooms = [];
-    const top = [];
-    for (let i = 0; i < beds; i++) top.push({ name: i === 0 ? 'Master Bed' : `Bed ${i + 1}`, wt: i === 0 ? 1.3 : 1 });
-    for (let i = 0; i < baths; i++) top.push({ name: baths > 1 ? `Bath ${i + 1}` : 'Bath', wt: 0.55 });
-    const bot = [{ name: 'Living', wt: 1.4 }, { name: 'Kitchen', wt: 1 }, { name: 'Dining', wt: 0.9 }];
-    const strip = (items, y, hh) => {
-      const tw = items.reduce((s, i) => s + i.wt, 0); let x = 0;
-      items.forEach((i) => { const ww = (w * i.wt) / tw; rooms.push({ id: uid('r'), name: i.name, x: +x.toFixed(1), y: +y.toFixed(1), w: +ww.toFixed(1), h: +hh.toFixed(1), ceiling: 8 }); x += ww; });
-    };
-    strip(top, 0, topH);
-    rooms.push({ id: uid('r'), name: 'Hall', x: 0, y: +topH.toFixed(1), w, h: +hallH.toFixed(1), ceiling: 8 });
-    strip(bot, topH + hallH, botH);
-    return rooms;
-  }
-
   function autoLayout(key, opts) {
     opts = opts || {};
-    const s = state.scenarios[key];
-    const b = bbox();
-    const rooms = state.rooms;
-    const hall = rooms.find((r) => /hall/i.test(r.name)) || rooms[0];
-    const ahuAt = hall ? { x: hall.x + 4, y: hall.y + hall.h / 2 } : { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-    const fpMaxX = state.footprint.length ? Math.max(...state.footprint.map((p) => p.x)) : b.x + b.w;
+    const s = state.scenarios[key], rooms = state.rooms;
     const mk = (type, x, y, extra) => Object.assign({ id: uid('e'), type, x: +x.toFixed(1), y: +y.toFixed(1) }, extra);
+    const hall = rooms.find((r) => /^hall$/i.test(r.name)) || rooms[0];
+    const ahRoom = rooms.find((r) => /a\/h|air handler/i.test(r.name));
+    const home = ahRoom || hall;
+    const ahuAt = home ? { x: home.x + home.w / 2, y: home.y + home.h / 2 } : { x: 10, y: 10 };
+    // condenser goes 5 ft outside the nearest outside wall to the air handler
+    const pts = state.footprint.length ? state.footprint : rooms.flatMap((r) => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y + r.h }]);
+    const minX = Math.min(...pts.map((p) => p.x)), maxX = Math.max(...pts.map((p) => p.x)), minY = Math.min(...pts.map((p) => p.y)), maxY = Math.max(...pts.map((p) => p.y));
+    const edges = [[ahuAt.y - minY, ahuAt.x, minY - 5], [ahuAt.x - minX, minX - 5, ahuAt.y], [maxX - ahuAt.x, maxX + 5, ahuAt.y], [maxY - ahuAt.y, ahuAt.x, maxY + 5]].sort((p, q) => p[0] - q[0])[0];
     const tons = opts.tons || state.curTons;
     const ahu = mk('ahu', ahuAt.x, ahuAt.y, { tons, label: 'AIR HANDLER' });
-    const cond = mk('condenser', fpMaxX + 5, ahuAt.y, { tons, label: 'CONDENSER' });
+    const cond = mk('condenser', edges[1], edges[2], { tons, label: 'CONDENSER' });
     s.equip = [ahu, cond]; s.ducts = [{ id: uid('d'), kind: 'refrig', a: cond.id, b: ahu.id }];
     const regs = [];
     rooms.forEach((r) => {
-      if (r === hall || r.noAC) return;
+      if (r.noAC || H.isTransferName(r.name)) return;
       const n = r.w * r.h > 300 ? 2 : 1;
       const wt = Math.max(0.5, Math.round((H.roomLoadBtu(r, state.cfg) / n / 1000) * 10) / 10);
-      for (let i = 0; i < n; i++) regs.push(mk('supply', r.x + (r.w * (i + 1)) / (n + 1), r.y + r.h / 2 + 2.5, { room: r.id, weight: wt }));
+      for (let i = 0; i < n; i++) regs.push(mk('supply', r.x + (r.w * (i + 1)) / (n + 1), r.y + r.h / 2, { room: r.id, weight: wt }));
     });
     s.equip.push(...regs);
-    const ret = mk('return', ahuAt.x + 4, hall.y + hall.h + 4, { size: '20x20' });
+    const rh = hall || home;
+    const ret = mk('return', rh ? rh.x + rh.w * 0.55 : ahuAt.x, rh ? rh.y + rh.h / 2 : ahuAt.y + 6, { size: '20x20' });
     s.equip.push(ret);
     s.ducts.push({ id: uid('d'), kind: 'return', a: ret.id, b: ahu.id, flex: true });
+    const per = opts.perBranch || 3;   // outlets per splitter
     if (opts.splitters) {
       regs.sort((p, q) => p.x - q.x);
-      for (let i = 0; i < regs.length; i += 3) {
-        const chunk = regs.slice(i, i + 3);
-        const cx = chunk.reduce((t, r) => t + r.x, 0) / chunk.length, cy = chunk.reduce((t, r) => t + r.y, 0) / chunk.length;
+      for (let i = 0; i < regs.length; i += per) {
+        const chunk = regs.slice(i, i + per);
+        const cx = chunk.reduce((t, r) => t + r.x, 0) / chunk.length;
         const sp = mk('splitter', cx, ahuAt.y);
         s.equip.push(sp);
         s.ducts.push({ id: uid('d'), kind: 'supply', a: ahu.id, b: sp.id });
@@ -509,11 +502,15 @@
   }
 
   function setFootprintAndRooms(fp, beds, baths) {
-    state.footprint = fp; state.walls = []; state.generated = true;
-    const w = Math.max(...fp.map((p) => p.x)), d = Math.max(...fp.map((p) => p.y));
-    state.rooms = autoRooms(w, d, beds, baths);
-    autoLayout('existing', { tons: state.curTons });
-    autoLayout('proposed', { tons: Math.max(1.5, state.curTons - 1), splitters: true });
+    state.walls = []; state.generated = true;
+    const minX = Math.min(...fp.map((p) => p.x)), minY = Math.min(...fp.map((p) => p.y));
+    const w = Math.max(...fp.map((p) => p.x)) - minX, d = Math.max(...fp.map((p) => p.y)) - minY;
+    const home = Layout.buildHome(w, d, beds, baths);
+    const isRect = fp.length === 4 && new Set(fp.map((p) => p.x)).size === 2 && new Set(fp.map((p) => p.y)).size === 2;
+    state.footprint = isRect ? home.footprint.map((p) => ({ x: +(p.x + minX).toFixed(1), y: +(p.y + minY).toFixed(1) })) : fp;
+    state.rooms = home.rooms.map((r) => ({ id: uid('r'), ceiling: 8, ...r, x: +(r.x + minX).toFixed(1), y: +(r.y + minY).toFixed(1) }));
+    autoLayout('existing', { tons: state.curTons, splitters: true, perBranch: 4 });
+    autoLayout('proposed', { tons: Math.max(1.5, state.curTons - 1), splitters: true, perBranch: 3 });
     fit(); renderRooms(); renderWalls(); renderAll();
   }
 
@@ -521,7 +518,7 @@
     state.address = '123 Sample St'; state.parcel = '30-4102-001-0010'; state.model = '4TTR4060'; state.curTons = 5;
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
     $('#curTons').value = '5';
-    setFootprintAndRooms(L.rectFootprint(54, 36), 3, 2);
+    setFootprintAndRooms(L.rectFootprint(60, 35), 3, 2);
   }
 
   /* ---------- editing ---------- */
