@@ -13,7 +13,7 @@ button:hover{border-color:var(--acc)}
 button.on{background:var(--acc);color:#04111f;border-color:var(--acc)}
 button.primary{background:var(--acc);color:#04111f;border-color:var(--acc);font-weight:600}
 .seg{display:inline-flex}.seg button{border-radius:0}.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}
-input,select{width:100%;background:#0b172a;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font:inherit}
+input,select,textarea{width:100%;font-family:inherit;resize:vertical;background:#0b172a;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font:inherit}
 label{display:block;color:var(--mut);font-size:11px;margin:6px 0}
 label input,label select{margin-top:2px;color:var(--ink)}
 .row{display:flex;gap:8px;align-items:flex-end}.row>*{flex:1}
@@ -46,6 +46,14 @@ td input{padding:2px 3px;text-align:right}td input.nm{text-align:left}
 .card b{display:block;font-size:18px}.card span{color:var(--mut);font-size:11px}
 .warns{margin:8px 0;padding-left:16px;color:var(--warn);font-size:12px}
 .x{background:none;border:0;color:var(--bad);padding:0 4px}
+#pv{position:fixed;inset:0;background:#000b;display:flex;align-items:center;justify-content:center;z-index:25}
+#pv[hidden]{display:none}
+#pv .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;width:min(640px,94vw);max-height:94vh;overflow:auto}
+#pv img{width:100%;max-height:60vh;object-fit:contain;background:#000;border-radius:6px}
+.ph{display:grid;grid-template-columns:64px 1fr;gap:8px;border:1px solid var(--line);border-radius:6px;padding:6px;margin-bottom:6px}
+.ph img{width:64px;height:64px;object-fit:cover;border-radius:4px;cursor:pointer;background:#0b172a}
+.ph .meta{font-size:11px;color:var(--mut);overflow-wrap:anywhere}.ph .row{margin-top:4px}.ph button{padding:2px 8px;font-size:11px}
+.ms{display:flex;gap:6px;align-items:flex-start;border-bottom:1px solid var(--line);padding:4px 0;font-size:12px}.ms span{flex:1}
 #dlg{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:30}
 #dlg[hidden]{display:none}
 #dlg .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;width:min(420px,90vw)}

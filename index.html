@@ -77,6 +77,21 @@
       <div id="xcheck"></div>
     </section>
 
+    <section id="fieldSec">
+      <h2>Field capture</h2>
+      <div class="row"><button id="btnPhoto" class="primary">Take photo</button><button id="btnPhotoPick">Add photos</button></div>
+      <input type="file" id="photoCam" accept="image/*" capture="environment" hidden>
+      <input type="file" id="photoPick" accept="image/*" multiple hidden>
+      <div id="photoStatus" class="status"></div>
+      <div id="photoList"></div>
+      <h2 style="margin-top:12px">Tape measurements</h2>
+      <div class="row"><label>What<select id="msWhat"><option>Ceiling height</option><option>Attic clearance</option><option>Window size</option><option>Door width</option><option>Duct run length</option><option>Equipment space</option><option>Other</option></select></label><label>Value<input id="msVal" placeholder="e.g. 9'6&quot;"></label></div>
+      <div class="row"><label>Room<select id="msRoom"></select></label><label>Note<input id="msNote"></label></div>
+      <button id="btnAddMeasure">Add measurement</button>
+      <div id="measureList"></div>
+      <label>Job notes<textarea id="jobNotes" rows="4" placeholder="Anything the plan doesn't show"></textarea></label>
+    </section>
+
     <section id="sizingSec">
       <h2>Sizing</h2>
       <label>Home age<select id="szEra"></select></label>
@@ -149,6 +164,13 @@
   </aside>
 </div>
 
+<div id="pv" hidden><div class="box">
+  <img id="pvImg" alt="">
+  <div id="pvMeta" class="muted"></div>
+  <label>Note<textarea id="pvNote" rows="2"></textarea></label>
+  <div class="row"><button id="pvDel" class="x">Delete photo</button><button id="pvClose" class="primary">Close</button></div>
+</div></div>
+
 <div id="dlg" hidden><div class="box"><p id="dlgMsg"></p><input id="dlgIn" hidden><div class="row"><button id="dlgNo">Cancel</button><button id="dlgOk" class="primary">OK</button></div></div></div>
 
 <div id="present" hidden>
@@ -175,6 +197,8 @@
 <script src="layout.js"></script>
 <script src="geo.js"></script>
 <script src="sizing.js"></script>
+<script src="exif.js"></script>
+<script src="media.js"></script>
 <script src="detect.js"></script>
 <script src="lookup.js"></script>
 <script src="app.js"></script>

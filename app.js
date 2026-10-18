@@ -31,7 +31,7 @@
   const state = {
     address: '', parcel: '', model: '', footprint: [], rooms: [],
     scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } },
-    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, sizing: { era: BR.sizing ? BR.sizing.defaultEra : '', envelope: BR.sizing ? BR.sizing.defaultEnvelope : '', basis: 'auto' }, geo: null, mapOn: false, mapOp: 0.9, point: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
+    active: 'existing', theme: BX.defaults.theme, walls: [], listing: {}, underlay: null, draft: null, calib: [], selRoom: null, photos: [], measures: [], notes: '', sizing: { era: BR.sizing ? BR.sizing.defaultEra : '', envelope: BR.sizing ? BR.sizing.defaultEnvelope : '', basis: 'auto' }, geo: null, mapOn: false, mapOp: 0.9, point: null, jobId: null, jobName: '', savedSig: null, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, curTons: 5, view: null, tool: 'select', sel: null, pending: null,
   };
 
   // In-page replacement for confirm()/prompt(), which hosted pages cannot show.
@@ -54,6 +54,79 @@
     return false;
   }
   const scn = () => state.scenarios[state.active];
+
+  /* ---------- field capture: photos, tape measurements ---------- */
+  const localIso = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+  const blobToDataURL = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
+  function dataURLToBlob(u) { const [h, b64] = u.split(','), bin = atob(b64), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: /^data:([^;]+)/.exec(h)[1] }); }
+  const num2 = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+  const cleanPhotos = (a) => (Array.isArray(a) ? a : []).filter((p) => p && typeof p.id === 'string').slice(0, 200).map((p) => ({ id: p.id, ts: String(p.ts || '').slice(0, 30), lat: num2(p.lat), lon: num2(p.lon), acc: num2(p.acc), src: ['photo', 'device', 'none'].includes(p.src) ? p.src : 'none', note: String(p.note || '').slice(0, 1000), x: num2(p.x), y: num2(p.y) }));
+  const cleanMeasures = (a) => (Array.isArray(a) ? a : []).filter((m) => m && typeof m.val === 'string').slice(0, 300).map((m) => ({ id: String(m.id || uid('m')), what: String(m.what || '').slice(0, 60), val: m.val.slice(0, 60), room: String(m.room || '').slice(0, 60), note: String(m.note || '').slice(0, 300), ts: String(m.ts || '').slice(0, 30) }));
+  const photoURLs = new Map();
+  async function photoURL(id) {
+    if (photoURLs.has(id)) return photoURLs.get(id);
+    const b = await Media.get(id); if (!b) return null;
+    const u = URL.createObjectURL(b); photoURLs.set(id, u); return u;
+  }
+  let gpsPromise = null;
+  function startGps() {   // ask for the position as the camera opens, so it is ready when the photo comes back
+    gpsPromise = new Promise((res) => { if (!navigator.geolocation) return res(null); navigator.geolocation.getCurrentPosition((p) => res({ lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) }), () => res(null), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }); });
+  }
+  async function shrinkImage(file) {   // longest side 1600 px, JPEG, upright
+    let bmp; try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { bmp = await createImageBitmap(file); }
+    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.82));
+  }
+  const setPhotoStatus = (t) => { $('#photoStatus').textContent = t; };
+  async function addPhotos(files, fromCamera) {
+    if (!files.length) return;
+    const gps = fromCamera && gpsPromise ? await gpsPromise : null;
+    let added = 0, noLoc = 0;
+    for (const f of files) {
+      try {
+        const ex = Exif.parse(await f.arrayBuffer()), blob = await shrinkImage(f), id = uid('ph');
+        await Media.put(id, blob);
+        const loc = ex.lat != null ? { lat: ex.lat, lon: ex.lon, src: 'photo' } : gps ? { lat: gps.lat, lon: gps.lon, acc: gps.acc, src: 'device' } : null;
+        if (!loc) noLoc++;
+        state.photos.push({ id, ts: ex.ts || localIso(new Date()), lat: loc ? loc.lat : null, lon: loc ? loc.lon : null, acc: loc && loc.acc ? loc.acc : null, src: loc ? loc.src : 'none', note: '', x: null, y: null });
+        added++;
+      } catch (e) { /* unreadable file: skip it */ }
+    }
+    setPhotoStatus(added ? `Added ${added} photo${added > 1 ? 's' : ''}.${noLoc ? ` ${noLoc} without a location (allow location access when taking photos, or use photos that already carry GPS).` : ''}` : 'Could not read that file as a photo.');
+    renderAll();
+  }
+  const fmtTs = (ts) => { const d = new Date(ts); return isNaN(d) ? ts : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); };
+  const gpsText = (p) => (p.lat != null ? `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}${p.acc ? ` (±${p.acc} m)` : ''}` : 'no location');
+  function renderPhotos() {
+    $('#photoList').innerHTML = state.photos.map((p, i) => `<div class="ph" data-ph="${esc(p.id)}"><img data-phimg="${esc(p.id)}" alt="Photo ${i + 1}"><div><div class="meta">${i + 1}. ${esc(fmtTs(p.ts))}<br>${esc(gpsText(p))}${p.src === 'device' ? ' · from this device' : ''}</div><input data-phnote placeholder="Note" value="${esc(p.note)}"><div class="row"><button data-phpin>${p.x != null ? 'Move pin' : 'Pin on plan'}</button><button data-phdel class="x">Delete</button></div></div></div>`).join('');
+    $('#photoList').querySelectorAll('[data-phimg]').forEach((img) => photoURL(img.dataset.phimg).then((u) => { if (u && img.isConnected) img.src = u; }));
+  }
+  let viewId = null;
+  async function openViewer(id) {
+    const p = state.photos.find((x) => x.id === id), u = p && (await photoURL(id)); if (!p) return;
+    viewId = id; $('#pvImg').src = u || '';
+    const link = p.lat != null ? ` · <a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=19/${p.lat}/${p.lon}" target="_blank" rel="noopener">map</a>` : '';
+    $('#pvMeta').innerHTML = `${esc(fmtTs(p.ts))} · ${esc(gpsText(p))}${link}`; $('#pvNote').value = p.note; $('#pv').hidden = false;
+  }
+  function closeViewer() { $('#pv').hidden = true; viewId = null; renderAll(); }
+  function deletePhoto(id) { state.photos = state.photos.filter((p) => p.id !== id); renderAll(); }   // the picture itself stays until the next clean-up, so Undo can bring it back
+  function pinPhoto(id) {
+    const p = state.photos.find((x) => x.id === id), v = state.view || { x: 0, y: 0, w: 60, h: 40 }; if (!p) return;
+    p.x = snap(v.x + v.w / 2); p.y = snap(v.y + v.h / 2); state.tool = 'select';
+    $('#tabs [data-tab=plan]').click(); $('#hint').textContent = 'Drag the pin to where the photo was taken. Click it to see the photo.'; renderAll();
+  }
+  function renderMeasures() {
+    const sel = $('#msRoom'), cur = sel.value;
+    sel.innerHTML = '<option value="">No room</option>' + state.rooms.map((r) => `<option>${esc(r.name)}</option>`).join(''); sel.value = cur;
+    $('#measureList').innerHTML = state.measures.map((m) => `<div class="ms" data-ms="${esc(m.id)}"><span><b>${esc(m.what)}</b> ${esc(m.val)}${m.room ? ' · ' + esc(m.room) : ''}${m.note ? '<br><small>' + esc(m.note) + '</small>' : ''}</span><button class="x" data-msdel>&times;</button></div>`).join('');
+    if (document.activeElement !== $('#jobNotes') && $('#jobNotes').value !== (state.notes || '')) $('#jobNotes').value = state.notes || '';
+  }
+  function renderField() { renderPhotos(); renderMeasures(); }
+  async function cleanUpMedia() {   // drop pictures no saved job, autosave or open design refers to
+    const keep = new Set(state.photos.map((p) => p.id)); readJobs().forEach((j) => ((j.data && j.data.photos) || []).forEach((p) => keep.add(p.id)));
+    const keys = (await Media.keys()) || []; for (const k of keys) if (!keep.has(k)) await Media.del(k);
+  }
 
   /* ---------- sizing, equipment matching, quote ---------- */
   function basisSqft() {
@@ -170,6 +243,7 @@
     $('#address').value = state.address || ''; $('#parcel').value = state.parcel || ''; $('#model').value = state.model || '';
     $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
     [['lsSqft', 'sqft'], ['lsBeds', 'beds'], ['lsBaths', 'baths']].forEach(([i, k]) => { $('#' + i).value = state.listing[k] != null ? state.listing[k] : ''; });
+    $('#jobNotes').value = state.notes || '';
   }
 
   /* ---------- undo / redo ---------- */
@@ -194,8 +268,8 @@
 
   /* ---------- jobs library, export / import ---------- */
   const JOBS_KEY = KEY + '.jobs';
-  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated', 'geo', 'mapOn', 'point', 'sizing'];
-  const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'geo', 'mapOn', 'sizing'];
+  const CORE = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'theme', 'active', 'generated', 'geo', 'mapOn', 'point', 'sizing', 'photos', 'measures', 'notes'];
+  const SIG = ['address', 'parcel', 'model', 'footprint', 'rooms', 'walls', 'scenarios', 'cfg', 'curTons', 'listing', 'record', 'geo', 'mapOn', 'sizing', 'photos', 'measures', 'notes'];
   const sig = () => JSON.stringify(SIG.map((k) => state[k]));
   const hasWork = () => state.rooms.length > 0 || ['existing', 'proposed'].some((k) => state.scenarios[k].equip.length > 0);
   const isDirty = () => hasWork() && sig() !== state.savedSig;
@@ -209,14 +283,15 @@
   }
   const validGeo = (g) => !!g && ['lat0', 'lon0', 'ang', 'mx', 'my', 's'].every((k) => typeof g[k] === 'number' && isFinite(g[k])) && Math.abs(g.lat0) <= 90 && Math.abs(g.lon0) <= 180;
   function resetJob() {
-    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, geo: null, mapOn: false, point: null, sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' }, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
+    Object.assign(state, { jobId: null, jobName: '', savedSig: null, listing: {}, record: null, geo: null, mapOn: false, point: null, photos: [], measures: [], notes: '', sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' }, underlay: null, calib: [], draft: null, selRoom: null, sel: null, pending: null });
     ['jobName', 'lsSqft', 'lsBeds', 'lsBaths'].forEach((i) => { $('#' + i).value = ''; });
   }
   function applyJob(d) {
     Object.assign(state, { address: '', parcel: '', model: '', footprint: [], rooms: [], walls: [], listing: {}, record: null, generated: false, curTons: 5, active: 'existing',
-      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, geo: null, mapOn: false, point: null, sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' } });
+      scenarios: { existing: { equip: [], ducts: [] }, proposed: { equip: [], ducts: [] } }, cfg: { btuPerSqft: BX.defaults.btuPerSqft }, geo: null, mapOn: false, point: null, photos: [], measures: [], notes: '', sizing: { era: BX.sizing ? BX.sizing.defaultEra : '', envelope: BX.sizing ? BX.sizing.defaultEnvelope : '', basis: 'auto' } });
     CORE.forEach((k) => { if (d[k] !== undefined && d[k] !== null) state[k] = d[k]; });
     if (!validGeo(state.geo)) { state.geo = null; state.mapOn = false; }
+    state.photos = cleanPhotos(state.photos); state.measures = cleanMeasures(state.measures); state.notes = typeof state.notes === 'string' ? state.notes.slice(0, 5000) : '';
     state.underlay = d.underlay && typeof d.underlay.url === 'string' && /^data:image\//.test(d.underlay.url) ? d.underlay : null;
     Object.assign(state, { sel: null, pending: null, selRoom: null, tool: 'select', draft: null, calib: [], view: null });
     $('#address').value = state.address; $('#parcel').value = state.parcel; $('#model').value = state.model;
@@ -259,10 +334,12 @@
     if (state.jobId === id) { state.jobId = null; state.savedSig = null; save(); }
     setJobMsg(`Deleted "${job.name}".`);
   }
-  function exportJob() {
+  async function exportJob() {
     const name = $('#jobName').value.trim() || state.jobName || state.address || 'job';
+    const media = {};
+    for (const ph of state.photos) { const b = await Media.get(ph.id); if (b) media[ph.id] = await blobToDataURL(b); }
     const file = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.ductjob.json';
-    const blob = new Blob([JSON.stringify({ format: 'ductlayout-job', version: 1, name, saved: new Date().toISOString(), data: jobData(true) })], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ format: 'ductlayout-job', version: 1, name, saved: new Date().toISOString(), data: jobData(true), media })], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     setJobMsg('Exported ' + file + '.');
@@ -274,6 +351,7 @@
     try { j = JSON.parse(await file.text()); } catch (e) { return setJobMsg('That is not a valid job file.'); }
     if (!j || j.format !== 'ductlayout-job' || !validJob(j.data)) return setJobMsg('That file is not a job file from this app, or it is damaged.');
     if (!(await okToReplace())) return;
+    for (const [id, url] of Object.entries(j.media || {})) if (typeof id === 'string' && /^data:image\//.test(url)) await Media.put(id, dataURLToBlob(url));
     applyJob(j.data); state.jobId = null; state.savedSig = null; state.jobName = ''; $('#jobName').value = String(j.name || '').slice(0, 80);
     save(); setJobMsg(`Imported "${j.name || 'job'}". Press Save to keep it in the jobs list.`);
   }
@@ -480,6 +558,14 @@
       state.calib.forEach((c) => el('circle', { cx: c.x, cy: c.y, r: 0.6, fill: COL.sel, 'pointer-events': 'none' }, svg));
       if (dr && dr.kind === 'room') label(svg, dr.x + dr.w / 2, dr.y + dr.h / 2, `${dr.w} × ${dr.h} ft`, { size: 1.1, bold: true });
     }
+    if (interactive) state.photos.forEach((p, i) => {   // photo pins
+      if (p.x == null) return;
+      const g = el('g', { transform: `translate(${p.x} ${p.y})`, 'data-photo': p.id, style: 'cursor:pointer' }, svg);
+      el('rect', { x: -2, y: -1.5, width: 4, height: 5, fill: 'transparent' }, g);   // generous tap area
+      el('rect', { x: -1.3, y: -0.9, width: 2.6, height: 1.8, rx: 0.3, fill: COL.warn, stroke: COL.line, 'stroke-width': 0.15 }, g);
+      el('circle', { r: 0.55, fill: COL.bg, stroke: COL.line, 'stroke-width': 0.15 }, g);
+      label(g, 0, 2.6, String(i + 1), { size: 1, bold: true });
+    });
     if (interactive && state.tool === 'select') {      // bend handles on the selected duct
       const sel = items.find((p) => p.d.id === state.sel && p.d.kind !== 'refrig');
       if (sel) {
@@ -593,7 +679,8 @@
   function renderRooms() {
     $('#roomTable').innerHTML = state.rooms.map((r) => `<div class="rm${state.selRoom === r.id ? ' sel' : ''}" data-room="${r.id}">
       <div class="rrow"><input class="nm" data-rk="name" value="${esc(r.name)}"><label class="ac"><input data-rk="ac" type="checkbox" ${r.noAC ? '' : 'checked'}> A/C</label><button class="x" data-rdel title="Delete room">×</button></div>
-      <div class="rrow">${[['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'D']].map(([k, n]) => `<label>${n}<input data-rk="${k}" type="number" step="0.5" value="${r[k]}"></label>`).join('')}</div></div>`).join('');
+      <div class="rrow">${[['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'D']].map(([k, n]) => `<label>${n}<input data-rk="${k}" type="number" step="0.5" value="${r[k]}"></label>`).join('')}</div>
+      <div class="rrow"><label>Ceiling ft<input data-rk="ceiling" type="number" step="0.5" value="${r.ceiling || 8}"></label><label>Sun<select data-rk="exposure">${[['low', 'Shaded'], ['normal', 'Normal'], ['high', 'Sunny']].map(([v, t]) => `<option value="${v}"${(r.exposure || 'normal') === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label></div></div>`).join('');
   }
 
   function renderXcheck() {
@@ -621,7 +708,7 @@
   function renderAll() {
     document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
-    renderResults(); renderProps(); renderXcheck(); renderJobs(); renderMapUI(); renderSizing(); renderQuote();
+    renderResults(); renderProps(); renderXcheck(); renderJobs(); renderMapUI(); renderSizing(); renderQuote(); renderField();
     if (!restoring) commitHist();   // a finished action (drop, rotate, delete, end of a drag) is its own undo step
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
     document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
@@ -814,7 +901,9 @@
       if (touches.size > 2) return;
       const g = ev.target.closest('[data-id]'), du = ev.target.closest('[data-duct]') || ev.target.closest('[data-wall]');
       const p = svgPoint(svg, ev);
-      if (state.tool === 'select') {   // bend handles on a selected duct
+      if (state.tool === 'select') {   // bend handles on a selected duct; photo pins
+        const pin = ev.target.closest('[data-photo]'), pp = pin && state.photos.find((x) => x.id === pin.dataset.photo);
+        if (pp) { drag = { kind: 'pin', ph: pp, dx: p.x - pp.x, dy: p.y - pp.y, sx: p.x, sy: p.y, moved: false }; ev.preventDefault(); return; }
         const vh = ev.target.closest('[data-via]'), va = ev.target.closest('[data-viaadd]');
         if (vh || va) {
           const [id, i] = (vh || va).dataset[vh ? 'via' : 'viaadd'].split(':'), dd = scn().ducts.find((x) => x.id === id);
@@ -856,7 +945,8 @@
         return;
       }
       if (!drag) return;
-      if (drag.kind === 'via') { const p = svgPoint(svg, ev); drag.d.via[drag.i] = { x: snap(p.x), y: snap(p.y) }; refreshLight(); }
+      if (drag.kind === 'pin') { const p = svgPoint(svg, ev); if (Math.hypot(p.x - drag.sx, p.y - drag.sy) > 0.3) drag.moved = true; if (drag.moved) { drag.ph.x = snap(p.x - drag.dx); drag.ph.y = snap(p.y - drag.dy); refreshLight(); } }
+      else if (drag.kind === 'via') { const p = svgPoint(svg, ev); drag.d.via[drag.i] = { x: snap(p.x), y: snap(p.y) }; refreshLight(); }
       else if (drag.kind === 'rm') { const p = svgPoint(svg, ev); moveRoom(drag.room, snap(p.x - drag.dx), snap(p.y - drag.dy)); refreshLight(); }
       else if (drag.kind === 'rh') { resizeRoom(drag.room, drag.o, drag.k, svgPoint(svg, ev)); refreshLight(); }
       else if (drag.kind === 'eq') { const p = svgPoint(svg, ev); drag.e.x = snap(p.x - drag.dx); drag.e.y = snap(p.y - drag.dy); refreshLight(); }
@@ -882,6 +972,7 @@
       }
       if (drag && ['room', 'wall'].includes(drag.kind)) state.draft = null;
       if (drag && (drag.kind === 'rm' || drag.kind === 'rh')) { state.generated = false; renderRooms(); }
+      if (drag && drag.kind === 'pin' && !drag.moved) openViewer(drag.ph.id);
       if (drag && drag.kind !== 'pan') renderAll();
       drag = null;
     });
@@ -974,6 +1065,26 @@
       fr.readAsDataURL(f);
     };
     $('#btnDetect').onclick = detectRooms;
+    $('#btnPhoto').onclick = () => { startGps(); $('#photoCam').click(); };
+    $('#btnPhotoPick').onclick = () => $('#photoPick').click();
+    $('#photoCam').onchange = (e) => { addPhotos([...e.target.files], true); e.target.value = ''; };
+    $('#photoPick').onchange = (e) => { addPhotos([...e.target.files], false); e.target.value = ''; };
+    $('#photoList').addEventListener('click', (e) => {
+      const row = e.target.closest('[data-ph]'); if (!row) return; const id = row.dataset.ph;
+      if (e.target.matches('[data-phimg]')) openViewer(id); else if (e.target.matches('[data-phpin]')) pinPhoto(id); else if (e.target.matches('[data-phdel]')) deletePhoto(id);
+    });
+    $('#photoList').addEventListener('input', (e) => { if (!e.target.matches('[data-phnote]')) return; const p = state.photos.find((x) => x.id === e.target.closest('[data-ph]').dataset.ph); if (p) { p.note = e.target.value; save(); } });
+    $('#pvNote').oninput = (e) => { const p = state.photos.find((x) => x.id === viewId); if (p) { p.note = e.target.value; save(); } };
+    $('#pvClose').onclick = closeViewer; $('#pvDel').onclick = () => { const id = viewId; $('#pv').hidden = true; viewId = null; deletePhoto(id); };
+    $('#pv').addEventListener('click', (e) => { if (e.target.id === 'pv') closeViewer(); });
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#pv').hidden) closeViewer(); });
+    $('#btnAddMeasure').onclick = () => {
+      const val = $('#msVal').value.trim(); if (!val) return;
+      state.measures.push({ id: uid('m'), what: $('#msWhat').value, val, room: $('#msRoom').value, note: $('#msNote').value.trim(), ts: localIso(new Date()) });
+      $('#msVal').value = ''; $('#msNote').value = ''; renderAll();
+    };
+    $('#measureList').addEventListener('click', (e) => { if (!e.target.matches('[data-msdel]')) return; const id = e.target.closest('[data-ms]').dataset.ms; state.measures = state.measures.filter((m) => m.id !== id); renderAll(); });
+    $('#jobNotes').oninput = (e) => { state.notes = e.target.value.slice(0, 5000); refreshLight(); };
     fillSizingSelects();
     $('#szEra').onchange = (e) => { state.sizing.era = e.target.value; setFactorFromTable(); renderAll(); };
     $('#szEnv').onchange = (e) => { state.sizing.envelope = e.target.value; setFactorFromTable(); renderAll(); };
@@ -1095,7 +1206,7 @@
     $('#roomTable').addEventListener('input', (e) => {
       const tr = e.target.closest('[data-room]'); if (!tr) return;
       const r = state.rooms.find((x) => x.id === tr.dataset.room), k = e.target.dataset.rk;
-      if (k === 'ac') r.noAC = !e.target.checked; else r[k] = k === 'name' ? e.target.value : num(e.target.value, r[k]);
+      if (k === 'ac') r.noAC = !e.target.checked; else r[k] = k === 'name' || k === 'exposure' ? e.target.value : num(e.target.value, r[k]);
       refreshLight();
     });
     $('#roomTable').addEventListener('click', (e) => {
@@ -1148,4 +1259,5 @@
   } else { fit(); renderRooms(); renderWalls(); renderAll(); }   // first visit: blank plan
   document.body.dataset.tab = 'plan';
   lastSnap = sig(); updateUndoButtons();
+  setTimeout(cleanUpMedia, 4000);
 })();
