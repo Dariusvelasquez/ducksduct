@@ -1,6 +1,8 @@
 # Handoff guide
 
-A static web app (HTML, CSS, JavaScript). No server, database or build dependencies. Node 18+ is only needed to run the build, the tests and the preview server.
+A static web app (HTML, CSS, JavaScript). No server, database or build dependencies. Node.js is needed only on a developer's computer, to run the build, the tests and the preview server. The deployed site is plain static files and runs no Node at all.
+
+**Node version:** use **Node 24 (current LTS)**, or Node 22 at minimum. Node 18 and 20 are end of life and no longer get security fixes, and Node 22 leaves maintenance in April 2027. This project was tested on Node 22 and Node 24 and has no npm dependencies, so a newer LTS should also work. Check nodejs.org/en/about/previous-releases for the current schedule before installing.
 
 ## 1. Deploy in 10 minutes
 ```

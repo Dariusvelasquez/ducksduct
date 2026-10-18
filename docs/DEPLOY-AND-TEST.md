@@ -6,7 +6,7 @@
 3. Saved jobs stay in that browser on that computer.
 
 ## B. Run the real build on your computer
-1. Install Node.js 18 or newer (nodejs.org).
+1. Install Node.js 24 LTS from nodejs.org (22 also works; 18 and 20 are end of life, so do not use them). Node is only needed on your computer to build and test, not on the web host.
 2. Unzip the source, open a terminal in the folder.
 3. `npm test` (all tests should pass), then `npm run build`, then `npm run serve`.
 4. Open http://localhost:8080.
