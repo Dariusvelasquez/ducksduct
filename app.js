@@ -193,12 +193,79 @@
     return `<p class="muted">Suggested for this home: <b>${esc(m.item.label)}</b> (needs ${e.type === 'head' ? Math.round(m.need).toLocaleString() + ' BTU' + (ctx.room ? ' in ' + esc(ctx.room) : '') : m.need + ' ton'}).</p>${cur === val ? '<p class="ok">This item already matches.</p>' : `<button data-apply-match="${val}">Set to ${e.type === 'head' ? val / 1000 + 'k BTU' : val + ' ton'}</button>`}`;
   }
 
+  /* ---------- share a picture ---------- */
+  function exportView(aspect) {   // the whole design, framed to the picture's shape (not the current zoom)
+    const b = bbox(), pad = 8; let x = b.x - pad, y = b.y - pad, w = b.w + pad * 2, h = b.h + pad * 2;
+    if (w / h < aspect) { const nw = h * aspect; x -= (nw - w) / 2; w = nw; } else { const nh = w / aspect; y -= (nh - h) / 2; h = nh; }
+    return { x, y, w, h };
+  }
+  async function planCanvas(key, w, h) {
+    const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('xmlns', NS); svg.id = 'xp' + key; svg.__px = w;
+    const v = exportView(w / h);
+    renderPlan(svg, key, false, v);
+    svg.setAttribute('width', w); svg.setAttribute('height', h);
+    let missing = false;
+    await Promise.all([...svg.querySelectorAll('image')].map(async (im) => {   // a picture cannot load web images, so put the map tiles inside it
+      const u = im.getAttribute('href'); if (!/^https?:/.test(u)) return;
+      try { const r = await fetch(u, { mode: 'cors' }); if (!r.ok) throw new Error('tile'); im.setAttribute('href', await blobToDataURL(await r.blob())); } catch (e) { im.remove(); missing = true; }
+    }));
+    svg.insertBefore(el('rect', { x: v.x, y: v.y, width: v.w, height: v.h, fill: COL.bg }), svg.firstChild);
+    const img = new Image(); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg)); await img.decode();
+    const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return { canvas: c, missing };
+  }
+  function wrapText(ctx, text, maxW) {
+    const out = []; let line = '';
+    String(text).split(/\s+/).forEach((word) => { const t = line ? line + ' ' + word : word; if (ctx.measureText(t).width > maxW && line) { out.push(line); line = word; } else line = t; });
+    if (line) out.push(line); return out;
+  }
+  async function composePicture(both) {
+    const W = both ? 2000 : 1600, pad = 40, head = 130, ph = both ? 740 : 1000, pw = both ? (W - pad * 3) / 2 : W - pad * 2;
+    const keys = both ? ['existing', 'proposed'] : [state.active], plans = await Promise.all(keys.map((k) => planCanvas(k, Math.round(pw), ph)));
+    const an = keys.map((k) => H.analyze(state.scenarios[k], state.rooms, state.cfg));
+    const probe = document.createElement('canvas').getContext('2d'); probe.font = '15px system-ui, sans-serif';
+    const disc = wrapText(probe, BX.disclaimer, W - pad * 2), foot = disc.length * 20 + 30, statH = 70, H2 = head + ph + statH + foot + pad;
+    const c = document.createElement('canvas'); c.width = W; c.height = H2; const g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H2);
+    const co = BX.company, name = co.name || BX.name;
+    g.fillStyle = '#10243f'; g.font = '700 36px system-ui, sans-serif'; g.fillText(name, pad, 58);
+    g.fillStyle = '#44556f'; g.font = '22px system-ui, sans-serif'; g.fillText(state.address || 'HVAC layout', pad, 96);
+    g.textAlign = 'right'; g.font = '18px system-ui, sans-serif'; g.fillText([co.phone, co.email].filter(Boolean).join('  ·  '), W - pad, 58); g.fillText([state.parcel && 'Parcel ' + state.parcel, new Date().toLocaleDateString()].filter(Boolean).join('  ·  '), W - pad, 90); g.textAlign = 'left';
+    plans.forEach((p, i) => {
+      const x = pad + i * (pw + pad), t = an[i].total;
+      g.drawImage(p.canvas, x, head); g.strokeStyle = '#9aa7ba'; g.lineWidth = 2; g.strokeRect(x, head, pw, ph);
+      g.fillStyle = '#10243f'; g.font = '700 26px system-ui, sans-serif'; g.fillText(keys[i] === 'proposed' ? 'Proposed system' : 'Existing system', x, head + ph + 36);
+      g.fillStyle = '#44556f'; g.font = '19px system-ui, sans-serif';
+      g.fillText(`${tonsLabel(t.installedTons)} ton installed  ·  ${tonsLabel(t.requiredTons)} ton calculated need  ·  ${Math.round(t.oversize * 100)}% of need  ·  ${Math.round(t.sqftPerTon)} sq ft per ton`, x, head + ph + 66);
+    });
+    g.fillStyle = '#667892'; g.font = '15px system-ui, sans-serif'; disc.forEach((l, i) => g.fillText(l, pad, head + ph + statH + 24 + i * 20));
+    if (mapShown()) { g.font = '13px system-ui, sans-serif'; g.fillText(BX.map.attribution || '', pad, H2 - 12); }
+    return { canvas: c, missing: plans.some((p) => p.missing) };
+  }
+  function downloadBlob(name, blob) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  async function sharePicture(both) {
+    if (!state.rooms.length && !state.scenarios[state.active].equip.length) return setStatus('Nothing to share yet. Build a plan first.');
+    setStatus('Making the picture...');
+    try {
+      const { canvas, missing } = await composePicture(both);
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/png')), slug = (state.address || 'layout').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'layout';
+      const name = `${slug}-${both ? 'proposal' : state.active}.png`, file = new File([blob], name, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: (BX.company.name || BX.name) + ' layout', text: state.address || '' }); setStatus('Shared.'); return; } catch (e) { if (e.name === 'AbortError') return setStatus(''); }
+      }
+      downloadBlob(name, blob); setStatus(`Saved ${name}.${missing ? ' The map could not be included (the map server did not allow it).' : ''}`);
+    } catch (e) { setStatus('Could not make the picture: ' + e.message); }
+  }
+
   /* ---------- map under the plan ---------- */
   const mapShown = () => !!(state.mapOn && state.geo && BX.map.tileUrl);
   const polyAreaFt2 = (p) => Math.abs(p.reduce((s, a, i) => { const b = p[(i + 1) % p.length]; return s + a.x * b.y - b.x * a.y; }, 0)) / 2;
   function drawMap(svg, v) {
     if (!mapShown()) return;
-    const tiles = Geo.tilesFor(state.geo, v, svg.getBoundingClientRect().width || 800, { url: BX.map.tileUrl, maxZoom: BX.map.maxZoom });
+    const tiles = Geo.tilesFor(state.geo, v, svg.__px || svg.getBoundingClientRect().width || 800, { url: BX.map.tileUrl, maxZoom: BX.map.maxZoom });
     tiles.forEach((t) => el('image', { href: t.url, x: 0, y: 0, width: 1, height: 1, transform: `matrix(${t.m.join(' ')})`, preserveAspectRatio: 'none', opacity: state.mapOp, 'pointer-events': 'none' }, svg));
   }
   // Put the plan on the map: its centre sits on the geocoded address point, no rotation. A hand-drawn or estimated outline
@@ -463,11 +530,11 @@
     return `M${a.x} ${a.y}V${b.y}H${b.x}`;
   }
 
-  function renderPlan(svg, key, interactive) {
+  function renderPlan(svg, key, interactive, viewOverride) {
     const s = state.scenarios[key];
     const a = H.analyze(s, state.rooms, state.cfg);
     { const xs = state.rooms.flatMap((r) => [r.x, r.x + r.w]), ys = state.rooms.flatMap((r) => [r.y, r.y + r.h]); const span = xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) : 50; FS = Math.max(0.6, Math.min(1, span / 50)); }
-    const v = state.view || { x: 0, y: 0, w: 60, h: 40 };
+    const v = viewOverride || state.view || { x: 0, y: 0, w: 60, h: 40 };
     svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     svg.innerHTML = '';
@@ -1125,6 +1192,8 @@
     $('#btnCopy').onclick = () => { state.scenarios.proposed = JSON.parse(JSON.stringify(state.scenarios.existing)); state.active = 'proposed'; renderAll(); };
     $('#btnPresent').onclick = present;
     $('#pClose').onclick = () => { $('#present').hidden = true; };
+    $('#btnShare').onclick = () => sharePicture(false);
+    $('#pShare').onclick = () => sharePicture(true);
     $('#btnSample').onclick = async () => { if (!(await okToReplace())) return; resetJob(); $('#jobState').dataset.msg = ''; loadSample(); };
     $('#btnSaveJob').onclick = () => putJob(false);
     $('#btnSaveNew').onclick = () => putJob(true);
