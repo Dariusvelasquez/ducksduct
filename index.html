@@ -98,6 +98,8 @@
 
   <main>
     <div id="toolbar">
+      <button id="btnUndo" title="Undo (Ctrl+Z)" disabled>&#8630; Undo</button><button id="btnRedo" title="Redo (Ctrl+Shift+Z)" disabled>Redo &#8631;</button>
+      <span class="sep"></span>
       <div class="seg" id="toolSeg">
         <button data-tool="select" class="on">Select / move</button>
         <button data-tool="supply">Supply duct</button>
@@ -148,6 +150,8 @@
   <p class="disclaimer" id="pDisc"></p>
   <p class="disclaimer" id="pPowered"></p>
 </div>
+
+<nav id="tabs"><button data-tab="plan" class="on">Plan</button><button data-tab="setup">Setup</button><button data-tab="results">Results</button></nav>
 
 <script src="config.js"></script>
 <script src="hvac.js"></script>

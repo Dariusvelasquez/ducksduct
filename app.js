@@ -46,12 +46,45 @@
   }
 
   /* ---------- persistence ---------- */
-  function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...state, pending: null, sel: null, underlay: null, draft: null, calib: [] })); } catch (e) {} }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...state, pending: null, sel: null, underlay: null, draft: null, calib: [] })); } catch (e) {} histSchedule(); }
   function load() {
     try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.rooms) { Object.assign(state, s, { pending: null, sel: null, tool: 'select', underlay: null, draft: null, calib: [], listing: s.listing || {} }); return true; } } catch (e) {}
     return false;
   }
   const scn = () => state.scenarios[state.active];
+
+  /* ---------- selection actions ---------- */
+  function rotateSel() { const e = scn().equip.find((x) => x.id === state.sel); if (!e) return; e.rot = ((e.rot || 0) + 90) % 360; renderAll(); }
+  function duplicateSel() {
+    const e = scn().equip.find((x) => x.id === state.sel); if (!e) return;
+    const c = { ...JSON.parse(JSON.stringify(e)), id: uid('e'), x: +(e.x + 3).toFixed(1), y: +(e.y + 3).toFixed(1) };
+    scn().equip.push(c); state.sel = c.id; renderAll();
+  }
+  function syncInputs() {
+    $('#address').value = state.address || ''; $('#parcel').value = state.parcel || ''; $('#model').value = state.model || '';
+    $('#curTons').value = state.curTons; $('#btuSqft').value = state.cfg.btuPerSqft;
+    [['lsSqft', 'sqft'], ['lsBeds', 'beds'], ['lsBaths', 'baths']].forEach(([i, k]) => { $('#' + i).value = state.listing[k] != null ? state.listing[k] : ''; });
+  }
+
+  /* ---------- undo / redo ---------- */
+  // Every edit is saved as a snapshot once the user pauses for 0.4 s, so one drag is one undo step.
+  let undoStack = [], redoStack = [], lastSnap = null, histTimer = null, restoring = false;
+  function updateUndoButtons() { const u = $('#btnUndo'), r = $('#btnRedo'); if (u) u.disabled = !undoStack.length; if (r) r.disabled = !redoStack.length; }
+  function commitHist() {
+    clearTimeout(histTimer);
+    const s = sig();
+    if (lastSnap === null) { lastSnap = s; return; }
+    if (s !== lastSnap) { undoStack.push(lastSnap); if (undoStack.length > 100) undoStack.shift(); redoStack = []; lastSnap = s; }
+    updateUndoButtons();
+  }
+  function histSchedule() { if (restoring) return; clearTimeout(histTimer); histTimer = setTimeout(commitHist, 400); }
+  function restoreSnap(snap) {
+    const arr = JSON.parse(snap); restoring = true;
+    try { SIG.forEach((k, i) => (state[k] = arr[i])); Object.assign(state, { sel: null, pending: null, selRoom: null, draft: null, calib: [] }); syncInputs(); renderRooms(); renderWalls(); renderAll(); } finally { restoring = false; }
+    lastSnap = snap; updateUndoButtons();
+  }
+  function undo() { commitHist(); if (!undoStack.length) return; redoStack.push(lastSnap); restoreSnap(undoStack.pop()); }
+  function redo() { commitHist(); if (!redoStack.length) return; undoStack.push(lastSnap); restoreSnap(redoStack.pop()); }
 
   /* ---------- jobs library, export / import ---------- */
   const JOBS_KEY = KEY + '.jobs';
@@ -164,11 +197,14 @@
     const b = bbox(), pad = 9;
     state.view = { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
   }
+  const rotPt = (e, dx, dy) => { const a = ((e.rot || 0) * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a); return { x: e.x + dx * c - dy * s, y: e.y + dx * s + dy * c }; };
   function port(e, which) {
     const [w] = SIZE[e.type];
-    if (e.type === 'ahu') return which === 'return' ? { x: e.x - w / 2, y: e.y } : { x: e.x + w / 2, y: e.y };
+    if (e.type === 'ahu') return rotPt(e, which === 'return' ? -w / 2 : w / 2, 0);
     return { x: e.x, y: e.y };
   }
+  // orthogonal path through a list of points: supply ducts go across then along, returns along then across
+  const viaPath = (pts, kind) => pts.slice(1).reduce((s, q) => s + (kind === 'return' ? `V${q.y}H${q.x}` : `H${q.x}V${q.y}`), `M${pts[0].x} ${pts[0].y}`);
 
   /* ---------- SVG drawing ---------- */
   function el(tag, attrs, parent, text) {
@@ -178,18 +214,21 @@
     if (parent) parent.appendChild(n);
     return n;
   }
+  let LABEL_ROT = 0; // equipment rotation in degrees: labels are turned back so they stay upright
   let FS = 1; // label scale: smaller buildings get smaller text so labels don't pile up
   function label(parent, x, y, t, o) {
     o = o || {};
     const n = el('text', { x, y, 'font-size': (o.size || 1.15) * FS, fill: o.fill || COL.line, 'text-anchor': o.anchor || 'middle', 'font-family': 'ui-monospace,Menlo,monospace', 'font-weight': o.bold ? 700 : 400, 'pointer-events': 'none' }, parent, t);
     n.style.paintOrder = 'stroke'; n.setAttribute('stroke', COL.bg); n.setAttribute('stroke-width', '0.35');
+    if (LABEL_ROT) n.setAttribute('transform', `rotate(${-LABEL_ROT} ${x} ${y})`);
     return n;
   }
 
   function drawEquip(g, e, a, interactive) {
     const [w, h] = SIZE[e.type];
     const info = a.eq[e.id] || {};
-    const grp = el('g', { transform: `translate(${e.x} ${e.y})`, 'data-id': e.id, style: interactive ? 'cursor:move' : '' }, g);
+    LABEL_ROT = e.rot || 0;
+    const grp = el('g', { transform: `translate(${e.x} ${e.y})${e.rot ? ` rotate(${e.rot})` : ''}`, 'data-id': e.id, style: interactive ? 'cursor:move' : '' }, g);
     const sel = interactive && (state.sel === e.id || state.pending === e.id);
     const stroke = sel ? COL.sel : COL.line;
     const sw = sel ? 0.35 : 0.2;
@@ -230,6 +269,7 @@
       el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, fill: 'transparent', stroke: sel ? COL.sel : 'none', 'stroke-width': 0.2, 'stroke-dasharray': '0.4 0.3' }, grp);
       label(grp, 0, 0.5, e.label || 'Note', { size: e.fs || 1.5, bold: true });
     }
+    LABEL_ROT = 0;
     return grp;
   }
 
@@ -295,10 +335,11 @@
       const cfm = a.ductFlow[d.id] || 0;
       const dia = d.dia > 0 ? d.dia : H.ductDia(cfm);
       const toOutlet = B.type === 'supply' || B.type === 'return' || A.type === 'supply' || A.type === 'return';
-      const dpath = d.kind === 'refrig' ? `M${pa.x} ${pa.y}L${pb.x} ${pb.y}` : d.flex ? `M${pa.x} ${pa.y}Q${pa.x} ${pb.y} ${pb.x} ${pb.y}` : toOutlet ? ductPath(pa, pb, d.kind) : `M${pa.x} ${pa.y}H${pb.x}V${pb.y}`;
+      const via = d.kind !== 'refrig' && d.via && d.via.length ? d.via : null;
+      const dpath = d.kind === 'refrig' ? `M${pa.x} ${pa.y}L${pb.x} ${pb.y}` : via ? (d.flex ? 'M' + [pa, ...via, pb].map((q) => `${q.x} ${q.y}`).join('L') : viaPath([pa, ...via, pb], d.kind)) : d.flex ? `M${pa.x} ${pa.y}Q${pa.x} ${pb.y} ${pb.x} ${pb.y}` : toOutlet ? ductPath(pa, pb, d.kind) : `M${pa.x} ${pa.y}H${pb.x}V${pb.y}`;
       const wFt = d.kind === 'refrig' ? 0.2 : Math.max(0.9, dia / 12);
       [A, B].forEach((q) => { if ((q.type === 'supply' || q.type === 'return') && dia) a.eqDia[q.id] = Math.max(a.eqDia[q.id] || 0, dia); });
-      items.push({ d, pa, pb, cfm, dia, toOutlet, dpath, wFt });
+      items.push({ d, pa, pb, cfm, dia, toOutlet, dpath, wFt, via });
     });
     const rigid = items.filter((p) => p.d.kind !== 'refrig' && !p.d.flex);
     rigid.forEach((p) => el('path', { d: p.dpath, fill: 'none', stroke: COL[p.d.kind], 'stroke-width': p.wFt + 0.3, 'stroke-linejoin': 'round' }, svg));
@@ -310,7 +351,8 @@
       if (interactive) el('path', { d: p.dpath, fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(1.4, p.wFt), 'data-duct': d.id, style: 'cursor:pointer' }, svg);
       if (d.kind !== 'refrig' && p.dia > 0) {
         const txt = `${p.dia}"`;
-        if (d.flex) label(svg, (p.pa.x + p.pb.x) / 2 - 1.2, (p.pa.y + p.pb.y) / 2 - 1, txt, { size: 1.2, bold: true, fill: COL[d.kind] });
+        if (p.via) { const pts = [p.pa, ...p.via, p.pb]; let best = 0, bl = -1; for (let i = 0; i < pts.length - 1; i++) { const l = Math.abs(pts[i + 1].x - pts[i].x) + Math.abs(pts[i + 1].y - pts[i].y); if (l > bl) { bl = l; best = i; } } const q0 = pts[best], q1 = pts[best + 1]; label(svg, (q0.x + q1.x) / 2, (d.kind === 'return' ? (q0.y + q1.y) / 2 : q0.y) - p.wFt / 2 - 0.5, txt, { size: 1.1, bold: true, fill: COL[d.kind] }); }
+        else if (d.flex) label(svg, (p.pa.x + p.pb.x) / 2 - 1.2, (p.pa.y + p.pb.y) / 2 - 1, txt, { size: 1.2, bold: true, fill: COL[d.kind] });
         else if (p.toOutlet) label(svg, p.pa.x + p.wFt / 2 + 0.5, (p.pa.y + p.pb.y) / 2 + 0.4, txt, { size: 1.05, bold: true, anchor: 'start', fill: COL[d.kind] });
         else label(svg, (p.pa.x + p.pb.x) / 2, p.pa.y - p.wFt / 2 - 0.5, txt, { size: 1.15, bold: true, fill: COL[d.kind] });
       }
@@ -328,6 +370,14 @@
       if (dr && dr.kind === 'wall') el('line', { x1: dr.x1, y1: dr.y1, x2: dr.x2, y2: dr.y2, stroke: COL.sel, 'stroke-width': 0.6, 'pointer-events': 'none' }, svg);
       state.calib.forEach((c) => el('circle', { cx: c.x, cy: c.y, r: 0.6, fill: COL.sel, 'pointer-events': 'none' }, svg));
       if (dr && dr.kind === 'room') label(svg, dr.x + dr.w / 2, dr.y + dr.h / 2, `${dr.w} × ${dr.h} ft`, { size: 1.1, bold: true });
+    }
+    if (interactive && state.tool === 'select') {      // bend handles on the selected duct
+      const sel = items.find((p) => p.d.id === state.sel && p.d.kind !== 'refrig');
+      if (sel) {
+        const hs = Math.max(0.8, v.w / 80), pts = [sel.pa, ...(sel.via || []), sel.pb];
+        for (let i = 0; i < pts.length - 1; i++) { const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2; el('rect', { x: mx - hs * 0.45, y: my - hs * 0.45, width: hs * 0.9, height: hs * 0.9, fill: COL.bg, stroke: COL.sel, 'stroke-width': 0.2, transform: `rotate(45 ${mx} ${my})`, 'data-viaadd': sel.d.id + ':' + i, style: 'cursor:copy' }, svg); }
+        (sel.via || []).forEach((q, i) => el('circle', { cx: q.x, cy: q.y, r: hs * 0.6, fill: COL.sel, stroke: COL.bg, 'stroke-width': 0.2, 'data-via': sel.d.id + ':' + i, style: 'cursor:move' }, svg));
+      }
     }
     if (interactive && !state.rooms.length && !state.footprint.length && !s.equip.length) {
       const cx = v.x + v.w / 2, cy = v.y + v.h / 2, k = Math.max(1, v.w / 60);
@@ -403,7 +453,7 @@
     if (d) {
       body.className = '';
       const auto = H.ductDia(H.analyze(s, state.rooms, state.cfg).ductFlow[d.id] || 0);
-      body.innerHTML = `<b>${d.kind} duct</b>` + (d.kind === 'refrig' ? '' : `<label>Diameter (in, blank = auto ${auto || '-'}")<input data-dk="dia" type="number" step="1" value="${d.dia || ''}"></label><label><input data-dk="flex" type="checkbox" ${d.flex ? 'checked' : ''} style="width:auto"> Flex duct (curved)</label>`) + `<button class="x" data-del>Delete</button>`;
+      body.innerHTML = `<b>${d.kind} duct</b>` + (d.kind === 'refrig' ? '' : `<label>Diameter (in, blank = auto ${auto || '-'}")<input data-dk="dia" type="number" step="1" value="${d.dia || ''}"></label><label><input data-dk="flex" type="checkbox" ${d.flex ? 'checked' : ''} style="width:auto"> Flex duct (curved)</label>`) + (d.kind === 'refrig' ? '' : `<p class="muted">Drag a small diamond to add a bend, drag a round handle to move it, double-click it to remove it.</p>${d.via && d.via.length ? '<button data-straight>Straighten (remove bends)</button>' : ''}`) + `<button class="x" data-del>Delete</button>`;
       return;
     }
     if (!e) { body.className = 'muted'; body.textContent = 'Nothing selected'; return; }
@@ -417,7 +467,7 @@
     if (e.type === 'return') h += `<label>Grille size<input data-k="size" data-t="text" value="${esc(e.size || '20x20')}"></label>`;
     if (e.type === 'supply') h += f('weight', 'Damper balance weight (higher = more air)', 0.5);
     if (e.type === 'supply' || e.type === 'return') h += `<p class="muted">Airflow: ${Math.round(a.cfm || 0)} CFM · ${H.ductDia(a.cfm || 0)}" round duct</p>`;
-    h += `<div class="row"><label>X ft<input data-k="x" type="number" step="0.5" value="${e.x}"></label><label>Y ft<input data-k="y" type="number" step="0.5" value="${e.y}"></label></div><button class="x" data-del>Delete item</button>`;
+    h += `<div class="row"><label>X ft<input data-k="x" type="number" step="0.5" value="${e.x}"></label><label>Y ft<input data-k="y" type="number" step="0.5" value="${e.y}"></label></div><div class="row"><button data-rot>Rotate 90&deg; (R)</button><button data-dup>Duplicate (Ctrl+D)</button></div><button class="x" data-del>Delete item</button>`;
     body.innerHTML = h;
   }
 
@@ -452,6 +502,7 @@
     document.body.dataset.theme = state.theme;
     renderPlan($('#plan'), state.active, true);
     renderResults(); renderProps(); renderXcheck(); renderJobs();
+    if (!restoring) commitHist();   // a finished action (drop, rotate, delete, end of a drag) is its own undo step
     document.querySelectorAll('#scnSeg button').forEach((b) => b.classList.toggle('on', b.dataset.scn === state.active));
     document.querySelectorAll('#toolSeg button').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
     $('#plan').style.cursor = state.tool === 'select' ? 'grab' : 'crosshair';
@@ -630,9 +681,25 @@
   function bindPlan() {
     const svg = $('#plan');
     let drag = null;
+    const touches = new Map();   // active pointers, for two-finger pinch-zoom and pan
+    let pinch = null;
     svg.addEventListener('pointerdown', (ev) => {
+      touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (touches.size === 2) {
+        drag = null; const [a, b] = [...touches.values()], m = { clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 };
+        pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, m0: { x: m.clientX, y: m.clientY }, v0: { ...state.view }, p0: svgPoint(svg, m) };
+        ev.preventDefault(); return;
+      }
+      if (touches.size > 2) return;
       const g = ev.target.closest('[data-id]'), du = ev.target.closest('[data-duct]') || ev.target.closest('[data-wall]');
       const p = svgPoint(svg, ev);
+      if (state.tool === 'select') {   // bend handles on a selected duct
+        const vh = ev.target.closest('[data-via]'), va = ev.target.closest('[data-viaadd]');
+        if (vh || va) {
+          const [id, i] = (vh || va).dataset[vh ? 'via' : 'viaadd'].split(':'), dd = scn().ducts.find((x) => x.id === id);
+          if (dd) { dd.via = dd.via || []; if (va) dd.via.splice(+i, 0, { x: snap(p.x), y: snap(p.y) }); drag = { kind: 'via', d: dd, i: +i }; if (va) refreshLight(); ev.preventDefault(); return; }
+        }
+      }
       if (state.tool === 'rooms') {
         const sr = state.rooms.find((r) => r.id === state.selRoom), tol = Math.max(1, state.view.w / 45);
         const hit = sr && handlePts(sr).find((h) => Math.hypot(h.x - p.x, h.y - p.y) < tol);
@@ -657,8 +724,18 @@
       ev.preventDefault();
     });
     window.addEventListener('pointermove', (ev) => {
+      if (touches.has(ev.pointerId)) touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pinch && touches.size >= 2) {
+        const [a, b] = [...touches.values()], d = Math.hypot(a.x - b.x, a.y - b.y) || 1, f = Math.min(20, Math.max(0.05, pinch.d0 / d));
+        const v0 = pinch.v0, p0 = pinch.p0, w = Math.min(3000, Math.max(8, v0.w * f)), ff = w / v0.w, k = w / svg.getBoundingClientRect().width;
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        state.view = { x: p0.x - (p0.x - v0.x) * ff - (mx - pinch.m0.x) * k, y: p0.y - (p0.y - v0.y) * ff - (my - pinch.m0.y) * k, w, h: v0.h * ff };
+        svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
+        return;
+      }
       if (!drag) return;
-      if (drag.kind === 'rm') { const p = svgPoint(svg, ev); moveRoom(drag.room, snap(p.x - drag.dx), snap(p.y - drag.dy)); refreshLight(); }
+      if (drag.kind === 'via') { const p = svgPoint(svg, ev); drag.d.via[drag.i] = { x: snap(p.x), y: snap(p.y) }; refreshLight(); }
+      else if (drag.kind === 'rm') { const p = svgPoint(svg, ev); moveRoom(drag.room, snap(p.x - drag.dx), snap(p.y - drag.dy)); refreshLight(); }
       else if (drag.kind === 'rh') { resizeRoom(drag.room, drag.o, drag.k, svgPoint(svg, ev)); refreshLight(); }
       else if (drag.kind === 'eq') { const p = svgPoint(svg, ev); drag.e.x = snap(p.x - drag.dx); drag.e.y = snap(p.y - drag.dy); refreshLight(); }
       else if (drag.kind === 'room') { const p = svgPoint(svg, ev), x = snap(p.x), y = snap(p.y); state.draft = { kind: 'room', x: Math.min(drag.x0, x), y: Math.min(drag.y0, y), w: Math.abs(x - drag.x0), h: Math.abs(y - drag.y0) }; refreshLight(); }
@@ -670,7 +747,10 @@
         svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
       }
     });
-    window.addEventListener('pointerup', () => {
+    const endPointer = (ev) => { touches.delete(ev.pointerId); if (touches.size < 2) pinch = null; };
+    window.addEventListener('pointercancel', endPointer);
+    window.addEventListener('pointerup', (ev) => {
+      endPointer(ev);
       if (drag && drag.kind === 'room' && state.draft && state.draft.w >= 3 && state.draft.h >= 3) {
         const d = state.draft; state.generated = false; state.rooms.push({ id: uid('r'), name: 'Room ' + (state.rooms.length + 1), x: d.x, y: d.y, w: d.w, h: d.h, ceiling: 8 }); renderRooms();
       } else if (drag && drag.kind === 'wall' && state.draft && Math.abs(state.draft.x2 - state.draft.x1) + Math.abs(state.draft.y2 - state.draft.y1) >= 2) {
@@ -705,8 +785,19 @@
       state.view = { x: p.x - (p.x - v.x) * f, y: p.y - (p.y - v.y) * f, w: v.w * f, h: v.h * f };
       svg.setAttribute('viewBox', `${state.view.x} ${state.view.y} ${state.view.w} ${state.view.h}`);
     }, { passive: false });
+    svg.addEventListener('dblclick', (ev) => {   // double-click a bend handle to remove the bend
+      const vh = ev.target.closest('[data-via]'); if (!vh) return;
+      const [id, i] = vh.dataset.via.split(':'), dd = scn().ducts.find((x) => x.id === id);
+      if (dd && dd.via) { dd.via.splice(+i, 1); renderAll(); }
+    });
     window.addEventListener('keydown', (ev) => {
-      if ((ev.key === 'Delete' || ev.key === 'Backspace') && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) removeSel();
+      if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+      const mod = ev.ctrlKey || ev.metaKey, k = ev.key.toLowerCase();
+      if (ev.key === 'Delete' || ev.key === 'Backspace') removeSel();
+      else if (mod && k === 'z') { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); }
+      else if (mod && k === 'y') { ev.preventDefault(); redo(); }
+      else if (mod && k === 'd') { ev.preventDefault(); duplicateSel(); }
+      else if (!mod && k === 'r') rotateSel();
     });
   }
 
@@ -750,6 +841,8 @@
       fr.readAsDataURL(f);
     };
     $('#btnDetect').onclick = detectRooms;
+    $('#btnUndo').onclick = undo; $('#btnRedo').onclick = redo;
+    document.querySelectorAll('#tabs button').forEach((b) => (b.onclick = () => { document.body.dataset.tab = b.dataset.tab; document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b)); refreshLight(); }));
     $('#btnCalib').onclick = () => { if (!state.underlay) return setStatus('Upload a floor plan image first.'); state.tool = 'calib'; state.calib = []; $('#hint').textContent = 'Click two points on a wall of known length, then enter the length in feet.'; renderAll(); };
     $('#btnMoveImg').onclick = () => { if (!state.underlay) return setStatus('Upload a floor plan image first.'); state.tool = 'moveimg'; $('#hint').textContent = 'Drag to slide the image into place.'; renderAll(); };
     $('#imgShow').onchange = (e) => { if (state.underlay) { state.underlay.show = e.target.checked; renderAll(); } };
@@ -869,7 +962,12 @@
       eq[k] = e.target.dataset.t === 'text' ? e.target.value : (e.target.value === '' ? null : num(e.target.value, eq[k]));
       refreshLight();
     });
-    $('#propBody').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) removeSel(); });
+    $('#propBody').addEventListener('click', (e) => {
+      if (e.target.matches('[data-del]')) removeSel();
+      else if (e.target.matches('[data-rot]')) rotateSel();
+      else if (e.target.matches('[data-dup]')) duplicateSel();
+      else if (e.target.matches('[data-straight]')) { const du = scn().ducts.find((x) => x.id === state.sel); if (du) { du.via = []; renderAll(); } }
+    });
   }
 
   function applyBrand() {
@@ -892,4 +990,6 @@
     state.walls = state.walls || []; state.theme = state.theme || 'paper'; applyTheme();
     if (!state.view) fit(); renderRooms(); renderWalls(); renderAll();
   } else { fit(); renderRooms(); renderWalls(); renderAll(); }   // first visit: blank plan
+  document.body.dataset.tab = 'plan';
+  lastSnap = sig(); updateUndoButtons();
 })();
