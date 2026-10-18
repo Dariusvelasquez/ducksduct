@@ -57,9 +57,10 @@
       <h2>Floor plan image</h2>
       <input type="file" id="imgFile" accept="image/*">
       <div class="row"><button id="btnCalib">Set scale</button><button id="btnMoveImg">Move image</button></div>
+      <button id="btnDetect" class="primary">Detect rooms from image</button>
       <label><input type="checkbox" id="imgShow" checked style="width:auto"> Show image &nbsp; Opacity<input id="imgOp" type="range" min="10" max="100" value="55"></label>
       <div class="row"><button id="btnClearRooms">Blank plan</button><button id="btnRmImg">Remove image</button></div>
-      <small>Upload a listing floor plan or a photo of a sketch. Set scale: click two points on a known wall, enter its length. Use Blank plan first for a new job, then Draw room / Draw wall in the toolbar to trace. The image is kept in memory only, so re-upload after a reload.</small>
+      <small>Upload a listing floor plan (a clean digital plan works best). <b>1.</b> Set scale: click two points on a wall of known length and enter it. <b>2.</b> Detect rooms from image: it finds the rooms, sizes them to your scale and traces the outline. <b>3.</b> Rename and fix them with Edit rooms. For a sketch or photo, use Draw room / Draw wall instead. Use Blank plan first for a new job. The image is kept in memory only, so re-upload after a reload.</small>
     </section>
 
     <section>
@@ -151,6 +152,7 @@
 <script src="config.js"></script>
 <script src="hvac.js"></script>
 <script src="layout.js"></script>
+<script src="detect.js"></script>
 <script src="lookup.js"></script>
 <script src="app.js"></script>
 </body>

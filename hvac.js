@@ -29,7 +29,7 @@
   }
 
   // Halls, closets and similar rooms are conditioned by air moving through them, not by an outlet of their own.
-  const isTransferName = (n) => /^(hall|corridor)$/i.test(n) || /closet|linen|a\/h|pantry/i.test(n);
+  const isTransferName = (n) => /^(hall|corridor)( \d+)?$/i.test(n) || /closet|linen|a\/h|pantry/i.test(n);
 
   function roomSqft(r) { return r.w * r.h; }
 

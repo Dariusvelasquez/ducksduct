@@ -155,7 +155,7 @@
     state.rooms.forEach((r) => { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); });
     ['existing', 'proposed'].forEach((k) => state.scenarios[k].equip.forEach((e) => { xs.push(e.x); ys.push(e.y); }));
     const u = state.underlay;
-    if (u) { xs.push(u.x, u.x + u.w); ys.push(u.y, u.y + u.h); }
+    if (u && !state.rooms.length) { xs.push(u.x, u.x + u.w); ys.push(u.y, u.y + u.h); }   // frame the image only until there are rooms
     if (!xs.length) return { x: 0, y: 0, w: 60, h: 40 };
     const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
@@ -384,6 +384,7 @@
     state.rooms.forEach((x) => { x.x = sc(x.x); x.y = sc(x.y); x.w = sc(x.w); x.h = sc(x.h); });
     state.footprint.forEach((q) => { q.x = sc(q.x); q.y = sc(q.y); });
     state.walls.forEach((w) => { w.x1 = sc(w.x1); w.y1 = sc(w.y1); w.x2 = sc(w.x2); w.y2 = sc(w.y2); });
+    if (state.underlay) { const u = state.underlay; u.x *= f; u.y *= f; u.w *= f; u.h *= f; }   // keep the image aligned with the drawing
     ['existing', 'proposed'].forEach((k) => state.scenarios[k].equip.forEach((e) => { e.x = sc(e.x); e.y = sc(e.y); }));
     fit(); renderRooms(); renderWalls(); renderAll();
   }
@@ -563,6 +564,36 @@
     state.sel = null; renderAll();
   }
 
+  /* ---------- detect rooms from the floor-plan image ---------- */
+  async function detectRooms() {
+    const u = state.underlay;
+    if (!u) return setStatus('Upload a floor plan image first.');
+    if (!u.scaled) return setStatus('Press Set scale first: click two points on a wall whose length you know, then enter it. Room sizes depend on it.');
+    if (state.rooms.length && !(await ask('Replace the current rooms, walls and equipment with the rooms found in the image?'))) return;
+    setStatus('Looking for rooms...');
+    await new Promise((r) => setTimeout(r, 30));   // let the message paint before the heavy work
+    try {
+      const im = new Image(); im.src = u.url; await im.decode();
+      const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight)), cw = Math.round(im.naturalWidth * k), ch = Math.round(im.naturalHeight * k);
+      const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+      const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0, cw, ch);
+      const res = Detect.detect(g.getImageData(0, 0, cw, ch), { pxPerFt: cw / u.w });
+      const fx = (px) => snap(u.x + (px * u.w) / cw), fy = (py) => snap(u.y + (py * u.h) / ch);
+      let nr = 0, nc = 0, nh = 0;
+      const rooms = res.rooms.map((r) => {
+        const x0 = fx(r.x), y0 = fy(r.y), w = +(fx(r.x + r.w) - x0).toFixed(1), h = +(fy(r.y + r.h) - y0).toFixed(1), mn = Math.min(w, h), mx = Math.max(w, h);
+        const name = w * h < 40 ? 'Closet ' + ++nc : mn <= 3.6 && mx > 9 ? (nh++ ? 'Hall ' + nh : 'Hall') : 'Room ' + ++nr;
+        return { id: uid('r'), name, x: x0, y: y0, w, h, ceiling: 8 };
+      }).filter((r) => r.w > 0 && r.h > 0);
+      if (!rooms.length) return setStatus('No rooms found. Check that the scale is right, or trace the rooms with Draw room.');
+      state.rooms = rooms; state.walls = []; state.generated = false; state.selRoom = null; state.sel = null;
+      state.footprint = res.outline.map((p) => ({ x: fx(p.x), y: fy(p.y) })).filter((p, i, a) => i === 0 || p.x !== a[i - 1].x || p.y !== a[i - 1].y);
+      ['existing', 'proposed'].forEach((key) => (state.scenarios[key] = { equip: [], ducts: [] }));
+      fit(); renderRooms(); renderWalls(); renderAll();
+      setStatus(`Found ${rooms.length} rooms. Rename them and fix any that are wrong with Edit rooms (open-plan areas often come out as one big room, and L-shaped rooms as two). Then press Auto layout.`);
+    } catch (e) { setStatus('Could not detect rooms: ' + e.message); }
+  }
+
   function handlePts(r) {
     const x1 = r.x + r.w, y1 = r.y + r.h, mx = r.x + r.w / 2, my = r.y + r.h / 2;
     return [{ k: 'nw', x: r.x, y: r.y }, { k: 'n', x: mx, y: r.y }, { k: 'ne', x: x1, y: r.y }, { k: 'e', x: x1, y: my },
@@ -660,7 +691,7 @@
           const [a, b] = state.calib, meas = Math.hypot(b.x - a.x, b.y - a.y);
           ask('Real-world distance between the two points (feet)?', true).then((v) => {
             const ft = parseFloat(v);
-            if (ft > 0 && meas > 0) { const f = ft / meas, u = state.underlay; u.x = a.x - (a.x - u.x) * f; u.y = a.y - (a.y - u.y) * f; u.w *= f; u.h *= f; }
+            if (ft > 0 && meas > 0) { const f = ft / meas, u = state.underlay; u.x = a.x - (a.x - u.x) * f; u.y = a.y - (a.y - u.y) * f; u.w *= f; u.h *= f; u.scaled = true; }
             state.calib = []; state.tool = 'select'; renderAll();
           });
           return;
@@ -718,6 +749,7 @@
       };
       fr.readAsDataURL(f);
     };
+    $('#btnDetect').onclick = detectRooms;
     $('#btnCalib').onclick = () => { if (!state.underlay) return setStatus('Upload a floor plan image first.'); state.tool = 'calib'; state.calib = []; $('#hint').textContent = 'Click two points on a wall of known length, then enter the length in feet.'; renderAll(); };
     $('#btnMoveImg').onclick = () => { if (!state.underlay) return setStatus('Upload a floor plan image first.'); state.tool = 'moveimg'; $('#hint').textContent = 'Drag to slide the image into place.'; renderAll(); };
     $('#imgShow').onchange = (e) => { if (state.underlay) { state.underlay.show = e.target.checked; renderAll(); } };
