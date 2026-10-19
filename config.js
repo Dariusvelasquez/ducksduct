@@ -13,15 +13,6 @@ window.BRAND = {
     license: '',                      // e.g. 'FL CAC1234567'
     website: '',
   },
-  // Search and AI-assistant visibility (see HANDOFF.md, "Be found"). url is the public address of the deployed site, with no trailing
-  // slash. Without it the sitemap and canonical links cannot be written. The other fields are optional; leave them out for the defaults.
-  site: {
-    url: '',                          // e.g. 'https://design.yourcompany.com'
-    tagline: 'HVAC duct layout and sizing in the browser',
-    description: '',                  // 1-2 sentences for search results and AI summaries; '' = built-in text
-    areas: ['Florida'],               // places you serve, used in structured data and llms.txt
-    // faq: [['Question?', 'Answer.']], how: [['Step title', 'Text']], limits: ['Text'],  // replace the built-in page text
-  },
   disclaimer: 'Preliminary sizing estimate from room area and a rule-of-thumb BTU/sqft factor, not an ACCA Manual J load calculation. Confirm with a full load calculation before final equipment selection.',
   defaults: { btuPerSqft: 30, theme: 'paper' },   // theme: 'paper' or 'blueprint'
   features: {

@@ -17,18 +17,6 @@ Upload the contents of `dist/` to any static host: Netlify or Cloudflare Pages (
 Edit `config.js`: name, logo (`assets/logo.png` or a data URL), accent colour, company name / phone / email / licence number, proposal disclaimer, default BTU per sq ft, which buttons show. To keep a separate branding file: `node tools/build.js --config=my-brand.js`.
 Change `storageKey` per brand so two installs on one domain never share saved jobs.
 
-## 2b. Be found (search engines and AI assistants)
-The app itself is drawn by JavaScript, so on its own a crawler sees an empty page. `npm run build` therefore also writes crawlable pages and files: `how-it-works/`, `faq/`, `accuracy/`, `robots.txt` (explicitly allows search and AI crawlers), `sitemap.xml`, `llms.txt` and `llms-full.txt`, plus a description, canonical link, Open Graph tags and schema.org data (SoftwareApplication, Organization, FAQPage) on the pages. All text comes from `config.js` `site` and `company`; the built-in wording matches what the app really does, so edit it only to keep it true.
-
-To do after deploying:
-1. Set `site.url` in `config.js` (the public address) and rebuild. The build warns if it is empty.
-2. Add the site to Google Search Console and Bing Webmaster Tools and submit `sitemap.xml`. Bing's index feeds several AI assistants.
-3. Fill in `company` (name, phone, email, licence, website) so the structured data names a real business.
-4. Get other sites to mention and link to it: Google Business Profile, local directories and trade associations, a profile on the company site. AI assistants recommend what independent sources describe, not what a page says about itself.
-5. Check with a search for `site:yourdomain.com` after a few weeks, and ask the assistants what they say about it.
-
-No file can guarantee a recommendation. These steps make the site readable, accurate and citable; ranking depends on links, reviews and real content over time.
-
 ## 3. How it works
 | File | Role |
 |---|---|
@@ -40,7 +28,6 @@ No file can guarantee a recommendation. These steps make the site readable, accu
 | `geo.js`, `sizing.js`, `exif.js`, `media.js`, `detect.js` | Map maths, sizing table / catalog / quote, photo GPS reader, photo storage (IndexedDB), floor-plan image detection |
 | `jobber.js`, `roomplan.js` | Jobber sync client, LiDAR scan import (see `docs/JOBBER.md`, `docs/ROOMPLAN.md`) |
 | `server/jobber-proxy/` | Optional sync server (mock works, live part to be completed) |
-| `tools/seo.js` | Generates the crawlable pages, robots.txt, sitemap, llms.txt and structured data at build time |
 | `sw.js`, `manifest.webmanifest`, `assets/` | Installable app and offline support (generated into `dist/` by the build) |
 | `config.js` | White-label settings |
 | `tools/` | build, preview server, export |

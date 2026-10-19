@@ -5,7 +5,6 @@
  *   node tools/build.js --single   additionally write dist/index.single.html (everything inlined, one file)
  */
 const fs = require('fs'), path = require('path'), vm = require('vm');
-const { buildSeo } = require('./seo.js');
 const root = path.join(__dirname, '..'), dist = path.join(root, 'dist');
 const argv = process.argv.slice(2), args = new Set(argv);
 const cfgArg = argv.find((a) => a.startsWith('--config='));   // --config=path/to/brand-config.js
@@ -33,16 +32,11 @@ let jobberOrigin = '';
 try { if (brand.jobber && brand.jobber.proxyUrl) jobberOrigin = new URL(brand.jobber.proxyUrl).origin; } catch (e) {}
 const csp = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${tileOrigin}; connect-src 'self' ${connect.concat(tileOrigin || [], jobberOrigin || []).join(' ')}; object-src 'none'; base-uri 'none'; form-action 'none'`;
 
-const seo = buildSeo(brand);
-const siteTitle = (brand.name + (brand.site && brand.site.tagline ? ': ' + brand.site.tagline : ': HVAC duct layout and sizing')).replace(/[<>&"]/g, '');
 let html = read('index.html')
-  .replace(/<title>.*?<\/title>/, `<title>${siteTitle}</title>\n<meta http-equiv="Content-Security-Policy" content="${csp}">\n${seo.head}`)
-  .replace('<body>', `<body>\n${seo.noscript}`);
+  .replace(/<title>.*?<\/title>/, `<title>${brand.name.replace(/[<>&]/g, '')}</title>\n<meta http-equiv="Content-Security-Policy" content="${csp}">`);
 
 const files = { 'style.css': read('style.css'), 'hvac.js': read('hvac.js'), 'layout.js': read('layout.js'), 'geo.js': read('geo.js'), 'sizing.js': read('sizing.js'), 'exif.js': read('exif.js'), 'media.js': read('media.js'), 'detect.js': read('detect.js'), 'jobber.js': read('jobber.js'), 'roomplan.js': read('roomplan.js'), 'lookup.js': read('lookup.js'), 'app.js': read('app.js'), 'config.js': config };
 fs.writeFileSync(path.join(dist, 'index.html'), html);
-for (const [f, c] of Object.entries(seo.files)) { fs.mkdirSync(path.dirname(path.join(dist, f)), { recursive: true }); fs.writeFileSync(path.join(dist, f), c); }
-seo.warnings.forEach((w) => console.warn('WARNING: ' + w));
 for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dist, f), c);
 if (fs.existsSync(path.join(root, 'assets'))) fs.cpSync(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
 
@@ -58,6 +52,6 @@ if (args.has('--single')) {
   const body = html.match(/<body>([\s\S]*?)<script src="config.js">/)[1];
   const js = ['config.js', 'hvac.js', 'layout.js', 'geo.js', 'sizing.js', 'exif.js', 'media.js', 'detect.js', 'jobber.js', 'roomplan.js', 'lookup.js', 'app.js'].map((f) => files[f]).join('\n');
   if (/<\/script/i.test(js)) throw new Error('inline script contains </script');
-  fs.writeFileSync(path.join(dist, 'index.single.html'), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${siteTitle}</title><style>${files['style.css']}</style></head><body>${body}<script>${js}</script></body></html>`);
+  fs.writeFileSync(path.join(dist, 'index.single.html'), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${brand.name}</title><style>${files['style.css']}</style></head><body>${body}<script>${js}</script></body></html>`);
 }
 console.log('Built dist/ for "' + brand.name + '"' + ':', fs.readdirSync(dist).join(', '));
